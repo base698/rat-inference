@@ -1,0 +1,13 @@
+# Format: class_index x_center y_center width height
+# All values are normalized (0 to 1)
+
+# Example: img_001.txt
+0 0.5 0.5 0.3 0.4
+0 0.2 0.7 0.15 0.2
+
+# Where:
+# 0 = class index (0 for 'rat' in our case)
+# 0.5 = x_center (50% from left)
+# 0.5 = y_center (50% from top)
+# 0.3 = width (30% of image width)
+# 0.4 = height (40% of image height)

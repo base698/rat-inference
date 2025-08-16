@@ -1,0 +1,15 @@
+# rat_dataset.yaml - YOLOv8 dataset configuration file
+
+# Path to dataset root (relative to this YAML file or absolute paths)
+path: datasets/rat  # Root directory of your dataset
+
+# Paths to train, validation, and test sets (relative to 'path')
+train: images/train  # or 'train/images'
+val: images/val      # or 'val/images'
+
+# Number of classes
+nc: 1  # Just 1 class for rat detection
+
+# Class names (must match the class indices in your label files)
+names: 
+  0: rat  # Class index 0 is 'rat'
