@@ -14,13 +14,13 @@ import numpy as np
 import RPi.GPIO as GPIO
 
 class RatDetector:
-    def __init__(self, model_path, servo_pin=18, servo_enabled=False, confidence_threshold=0.5, allow_multiple_triggers=False):
+    def __init__(self, model_path, servo_pin=14, servo_enabled=False, confidence_threshold=0.5, allow_multiple_triggers=False):
         """
         Initialize the rat detector
         
         Args:
             model_path: Path to YOLO model weights
-            servo_pin: GPIO pin for servo control (default: 18)
+            servo_pin: GPIO pin for servo control (default: 14)
             servo_enabled: Whether to actually control the servo
             confidence_threshold: Minimum confidence for detection
             allow_multiple_triggers: Whether to allow servo to trigger multiple times
@@ -39,7 +39,7 @@ class RatDetector:
             GPIO.setup(self.servo_pin, GPIO.OUT)
             self.servo = GPIO.PWM(self.servo_pin, 50)  # 50Hz PWM
             self.servo.start(0)
-            self.set_servo_angle(0)  # Start at 0 degrees
+            self.set_servo_angle(100)  # Start at 100 degrees (neutral)
             
     def set_servo_angle(self, angle):
         """
@@ -60,16 +60,14 @@ class RatDetector:
         self.servo_position = angle
         
     def move_servo_forward(self):
-        """Move servo 60 degrees forward"""
-        new_position = min(self.servo_position + 60, 180)
-        print(f"Moving servo forward: {self.servo_position}° -> {new_position}°")
-        self.set_servo_angle(new_position)
+        """Move servo to 135 degrees (trigger position)"""
+        print(f"Moving servo to trigger position: {self.servo_position}° -> 135°")
+        self.set_servo_angle(135)
         
     def move_servo_backward(self):
-        """Move servo back to previous position"""
-        new_position = max(self.servo_position - 60, 0)
-        print(f"Moving servo backward: {self.servo_position}° -> {new_position}°")
-        self.set_servo_angle(new_position)
+        """Move servo back to neutral position (100 degrees)"""
+        print(f"Moving servo back to neutral: {self.servo_position}° -> 100°")
+        self.set_servo_angle(100)
         
     def capture_image(self, picam2, save_path="captures"):
         """
@@ -197,7 +195,7 @@ class RatDetector:
                         if self.servo_enabled:
                             print("\nTriggering servo action...")
                             self.move_servo_forward()
-                            time.sleep(1)  # Hold position
+                            time.sleep(2)  # Hold position for 2 seconds
                             self.move_servo_backward()
                             if not self.allow_multiple_triggers:
                                 self.servo_triggered = True
@@ -245,7 +243,7 @@ def main():
     # Servo settings
     parser.add_argument("--enable-servo", action="store_true",
                        help="Enable servo control (requires GPIO access)")
-    parser.add_argument("--servo-pin", type=int, default=18,
+    parser.add_argument("--servo-pin", type=int, default=14,
                        help="GPIO pin for servo control")
     parser.add_argument("--allow-multiple-triggers", action="store_true",
                        help="Allow servo to trigger multiple times (default: only trigger once)")
