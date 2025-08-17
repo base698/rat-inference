@@ -175,7 +175,8 @@ class RatDetector:
                 print(f"Captured: {image_path}")
                 
                 # Run inference
-                detections = self.run_inference(image_path)
+                detections, inference_time = self.run_inference(image_path)
+                print(f"Inference time: {inference_time:.2f} ms")
                 
                 if detections:
                     detection_count += len(detections)
