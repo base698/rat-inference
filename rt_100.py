@@ -97,14 +97,20 @@ class RatDetector:
             image_path: Path to image file
             
         Returns:
-            List of detections with rat class
+            Tuple of (list of detections with rat class, inference time in ms)
         """
+        # Start timing
+        start_time = time.time()
+        
         # Run inference
         results = self.model(
             image_path,
             conf=self.confidence_threshold,
             verbose=False
         )
+        
+        # Calculate inference time
+        inference_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         
         rat_detections = []
         
@@ -128,7 +134,7 @@ class RatDetector:
                             'bbox': xyxy
                         })
                         
-        return rat_detections
+        return rat_detections, inference_time
         
     def run(self, capture_interval=1.0, keep_images=False):
         """
