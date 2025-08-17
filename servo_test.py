@@ -10,7 +10,7 @@ import sys
 import signal
 
 # Configuration
-SERVO_PIN = 17  # GPIO17 (physical pin 11) - change this to your GPIO pin
+SERVO_PIN = 14  
 PWM_FREQ = 50   # Standard servo frequency (50Hz = 20ms period)
 
 def angle_to_duty_cycle(angle):
