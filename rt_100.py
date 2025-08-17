@@ -14,7 +14,7 @@ import numpy as np
 import RPi.GPIO as GPIO
 
 class RatDetector:
-    def __init__(self, model_path, servo_pin=18, servo_enabled=False, confidence_threshold=0.5):
+    def __init__(self, model_path, servo_pin=18, servo_enabled=False, confidence_threshold=0.5, allow_multiple_triggers=False):
         """
         Initialize the rat detector
         
@@ -23,12 +23,15 @@ class RatDetector:
             servo_pin: GPIO pin for servo control (default: 18)
             servo_enabled: Whether to actually control the servo
             confidence_threshold: Minimum confidence for detection
+            allow_multiple_triggers: Whether to allow servo to trigger multiple times
         """
         self.model = YOLO(model_path)
         self.servo_pin = servo_pin
         self.servo_enabled = servo_enabled
         self.confidence_threshold = confidence_threshold
         self.servo_position = 0  # Track current servo position
+        self.servo_triggered = False  # Track if servo has been triggered
+        self.allow_multiple_triggers = allow_multiple_triggers
         
         # Initialize servo if enabled
         if self.servo_enabled:
@@ -189,14 +192,22 @@ class RatDetector:
                         print(f"    Bounding box: [{det['bbox'][0]:.1f}, {det['bbox'][1]:.1f}, "
                               f"{det['bbox'][2]:.1f}, {det['bbox'][3]:.1f}]")
                     
-                    # Trigger servo action
-                    if self.servo_enabled:
-                        print("\nTriggering servo action...")
-                        self.move_servo_forward()
-                        time.sleep(1)  # Hold position
-                        self.move_servo_backward()
+                    # Trigger servo action (only if not already triggered or multiple triggers allowed)
+                    if not self.servo_triggered or self.allow_multiple_triggers:
+                        if self.servo_enabled:
+                            print("\nTriggering servo action...")
+                            self.move_servo_forward()
+                            time.sleep(1)  # Hold position
+                            self.move_servo_backward()
+                            if not self.allow_multiple_triggers:
+                                self.servo_triggered = True
+                                print("Servo has been triggered. It will not trigger again.")
+                        else:
+                            print("\n[SERVO DISABLED] Would trigger servo action here")
+                            if not self.allow_multiple_triggers:
+                                self.servo_triggered = True  # Mark as triggered even in simulation
                     else:
-                        print("\n[SERVO DISABLED] Would trigger servo action here")
+                        print("\n[SERVO ALREADY TRIGGERED] Skipping servo action")
                 else:
                     print("No rats detected")
                 
@@ -236,6 +247,8 @@ def main():
                        help="Enable servo control (requires GPIO access)")
     parser.add_argument("--servo-pin", type=int, default=18,
                        help="GPIO pin for servo control")
+    parser.add_argument("--allow-multiple-triggers", action="store_true",
+                       help="Allow servo to trigger multiple times (default: only trigger once)")
     
     # Capture settings
     parser.add_argument("--interval", "-i", type=float, default=1.0,
@@ -250,7 +263,8 @@ def main():
         model_path=args.model,
         servo_pin=args.servo_pin,
         servo_enabled=args.enable_servo,
-        confidence_threshold=args.confidence
+        confidence_threshold=args.confidence,
+        allow_multiple_triggers=args.allow_multiple_triggers
     )
     
     # Run detection loop
