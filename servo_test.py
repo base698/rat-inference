@@ -15,18 +15,18 @@ PWM_FREQ = 50   # Standard servo frequency (50Hz = 20ms period)
 
 def angle_to_duty_cycle(angle):
     """
-    Convert angle (0-180) to duty cycle (2-12%)
-    Most servos use:
-    - 1ms pulse (5% duty) = 0 degrees
-    - 1.5ms pulse (7.5% duty) = 90 degrees  
-    - 2ms pulse (10% duty) = 180 degrees
+    Convert angle (0-180) to duty cycle
+    Standard servos typically use:
+    - 0.5ms pulse (2.5% duty @ 50Hz) = 0 degrees
+    - 1.5ms pulse (7.5% duty @ 50Hz) = 90 degrees  
+    - 2.5ms pulse (12.5% duty @ 50Hz) = 180 degrees
     
     Adjust these values if your servo needs different pulse widths
     """
-    # Map 0-180 degrees to 2-12% duty cycle
-    # You may need to adjust these values for your specific servo
-    min_duty = 2.5  # Duty cycle for 0 degrees
-    max_duty = 12.5  # Duty cycle for 180 degrees
+    # Standard servo calibration - adjust if needed
+    # Most servos work with 5-10% duty cycle range
+    min_duty = 5.0   # Duty cycle for 0 degrees (1ms pulse)
+    max_duty = 10.0  # Duty cycle for 180 degrees (2ms pulse)
     
     duty = min_duty + (angle / 180.0) * (max_duty - min_duty)
     return duty
@@ -42,16 +42,18 @@ def setup_servo():
     
     return pwm
 
-def move_servo(pwm, angle):
+def move_servo(pwm, angle, hold_time=0.5):
     """Move servo to specified angle"""
     if angle < 0 or angle > 180:
         print(f"Warning: Angle {angle} out of range (0-180). Clamping.")
         angle = max(0, min(180, angle))
     
     duty = angle_to_duty_cycle(angle)
-    print(f"Moving to {angle}° (duty cycle: {duty:.1f}%)")
+    print(f"Moving to {angle}° (duty cycle: {duty:.2f}%)")
+    print(f"  Pulse width: {(duty/100) * 20:.2f}ms")  # Debug info
+    
     pwm.ChangeDutyCycle(duty)
-    time.sleep(0.5)  # Give servo time to move
+    time.sleep(hold_time)  # Give servo time to move
     pwm.ChangeDutyCycle(0)  # Stop sending signal to prevent jitter
 
 def cleanup(signum=None, frame=None):
@@ -79,11 +81,53 @@ def continuous_test(pwm):
 
 def single_position(pwm, angle):
     """Move servo to a single position and hold"""
-    print(f"Moving servo to {angle}°")
-    move_servo(pwm, angle)
-    print(f"Servo moved to {angle}°")
+    print(f"\nMoving servo to {angle}°")
+    move_servo(pwm, angle, hold_time=1.0)  # Hold longer for single position
+    print(f"Servo at {angle}°. Press Ctrl+C to exit or wait...")
+    
+    try:
+        # Keep the program running instead of immediately cleaning up
+        time.sleep(5)  # Hold position for 5 seconds
+        print("Returning to center (90°)...")
+        move_servo(pwm, 90)  # Return to center before exit
+        time.sleep(1)
+    except KeyboardInterrupt:
+        pass
     
     cleanup()
+
+def calibration_mode(pwm):
+    """Interactive calibration mode to find correct duty cycle values"""
+    print("\n=== CALIBRATION MODE ===")
+    print("Enter duty cycle values (2.0-12.5) to test, or 'q' to quit")
+    print("Typical values: 5.0 = 0°, 7.5 = 90°, 10.0 = 180°\n")
+    
+    while True:
+        try:
+            user_input = input("Duty cycle % (or angle with 'a' prefix, e.g., 'a90'): ").strip()
+            
+            if user_input.lower() == 'q':
+                break
+                
+            if user_input.startswith('a'):
+                # Angle mode
+                angle = float(user_input[1:])
+                move_servo(pwm, angle)
+            else:
+                # Direct duty cycle mode
+                duty = float(user_input)
+                if duty < 2.0 or duty > 12.5:
+                    print("Warning: Duty cycle should be between 2.0 and 12.5")
+                    
+                print(f"Setting duty cycle to {duty}%")
+                pwm.ChangeDutyCycle(duty)
+                time.sleep(0.5)
+                pwm.ChangeDutyCycle(0)
+                
+        except ValueError:
+            print("Invalid input. Enter a number or 'q' to quit")
+        except KeyboardInterrupt:
+            break
 
 def main():
     # Set up signal handler for clean exit
@@ -91,22 +135,27 @@ def main():
     signal.signal(signal.SIGTERM, cleanup)
     
     print("Raspberry Pi Servo Test")
-    print(f"Using GPIO{SERVO_PIN} (adjust SERVO_PIN in script if needed)\n")
+    print(f"Using GPIO{SERVO_PIN} (adjust SERVO_PIN in script if needed)")
+    print("Current calibration: 5.0% = 0°, 7.5% = 90°, 10.0% = 180°\n")
     
     # Setup servo
     pwm = setup_servo()
     
     # Check command line arguments
     if len(sys.argv) > 1:
-        try:
-            angle = float(sys.argv[1])
-            single_position(pwm, angle)
-        except ValueError:
-            print(f"Error: '{sys.argv[1]}' is not a valid angle")
-            print("Usage: python3 servo_test.py [angle]")
-            print("  angle: 0-180 degrees (optional)")
-            print("  If no angle provided, runs continuous test")
-            cleanup()
+        if sys.argv[1] == 'calibrate':
+            calibration_mode(pwm)
+        else:
+            try:
+                angle = float(sys.argv[1])
+                single_position(pwm, angle)
+            except ValueError:
+                print(f"Error: '{sys.argv[1]}' is not a valid angle")
+                print("Usage: python3 servo_test.py [angle|calibrate]")
+                print("  angle: 0-180 degrees (moves to specific angle)")
+                print("  calibrate: Enter calibration mode")
+                print("  If no argument provided, runs continuous test")
+                cleanup()
     else:
         continuous_test(pwm)
     
