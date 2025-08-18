@@ -82,13 +82,8 @@ def single_position(pwm, angle):
     print(f"Moving servo to {angle}°")
     move_servo(pwm, angle)
     print(f"Servo moved to {angle}°")
-    print("Press Ctrl+C to exit")
     
-    try:
-        # Keep the program running
-        signal.pause()
-    except KeyboardInterrupt:
-        cleanup()
+    cleanup()
 
 def main():
     # Set up signal handler for clean exit
