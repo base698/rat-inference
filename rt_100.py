@@ -39,7 +39,7 @@ class RatDetector:
             GPIO.setup(self.servo_pin, GPIO.OUT)
             self.servo = GPIO.PWM(self.servo_pin, 50)  # 50Hz PWM
             self.servo.start(0)
-            self.set_servo_angle(100)  # Start at 100 degrees (neutral)
+            self.set_servo_angle(30)  # Start at 30
             
     def set_servo_angle(self, angle):
         """
@@ -60,14 +60,14 @@ class RatDetector:
         self.servo_position = angle
         
     def move_servo_forward(self):
-        """Move servo to 135 degrees (trigger position)"""
-        print(f"Moving servo to trigger position: {self.servo_position}° -> 135°")
-        self.set_servo_angle(135)
+        """Move servo to 80 degrees (trigger position)"""
+        print(f"Moving servo to trigger position: {self.servo_position}° -> 80°")
+        self.set_servo_angle(80)
         
     def move_servo_backward(self):
-        """Move servo back to neutral position (100 degrees)"""
-        print(f"Moving servo back to neutral: {self.servo_position}° -> 100°")
-        self.set_servo_angle(100)
+        """Move servo back to neutral position (30 degrees)"""
+        print(f"Moving servo back to neutral: {self.servo_position}° -> 30°")
+        self.set_servo_angle(30)
         
     def capture_image(self, picam2, save_path="captures"):
         """
