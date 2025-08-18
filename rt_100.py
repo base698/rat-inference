@@ -38,8 +38,8 @@ class RatDetector:
             GPIO.setmode(GPIO.BCM)
             GPIO.setup(self.servo_pin, GPIO.OUT)
             self.servo = GPIO.PWM(self.servo_pin, 50)  # 50Hz PWM
-            self.servo.start(30)
-            self.set_servo_angle(30)  # Start at 30
+            self.servo.start(0)
+            self.set_servo_angle(0)  # Start at 0
             
     def set_servo_angle(self, angle):
         """
@@ -52,22 +52,25 @@ class RatDetector:
             print(f"[SERVO SIMULATION] Would move to {angle} degrees")
             return
             
-        # Convert angle to duty cycle (2.5% to 12.5% for 0-180 degrees)
-        duty_cycle = 2.5 + (angle / 180.0) * 10.0
+        # Convert angle to duty cycle (5.0% to 10.0% for 0-180 degrees)
+        # Matching servo_test.py calibration
+        min_duty = 5.0   # Duty cycle for 0 degrees
+        max_duty = 10.0  # Duty cycle for 180 degrees
+        duty_cycle = min_duty + (angle / 180.0) * (max_duty - min_duty)
         self.servo.ChangeDutyCycle(duty_cycle)
         time.sleep(0.5)  # Allow servo to move
         self.servo.ChangeDutyCycle(0)  # Stop sending signal
         self.servo_position = angle
         
     def move_servo_forward(self):
-        """Move servo to 80 degrees (trigger position)"""
-        print(f"Moving servo to trigger position: {self.servo_position}° -> 80°")
-        self.set_servo_angle(80)
+        """Move servo to 35 degrees (trigger position)"""
+        print(f"Moving servo to trigger position: {self.servo_position}° -> 35°")
+        self.set_servo_angle(35)
         
     def move_servo_backward(self):
-        """Move servo back to neutral position (30 degrees)"""
-        print(f"Moving servo back to neutral: {self.servo_position}° -> 30°")
-        self.set_servo_angle(30)
+        """Move servo back to neutral position (0 degrees)"""
+        print(f"Moving servo back to neutral: {self.servo_position}° -> 0°")
+        self.set_servo_angle(0)
         
     def capture_image(self, picam2, save_path="captures"):
         """
