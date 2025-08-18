@@ -38,7 +38,7 @@ class RatDetector:
             GPIO.setmode(GPIO.BCM)
             GPIO.setup(self.servo_pin, GPIO.OUT)
             self.servo = GPIO.PWM(self.servo_pin, 50)  # 50Hz PWM
-            self.servo.start(0)
+            self.servo.start(30)
             self.set_servo_angle(30)  # Start at 30
             
     def set_servo_angle(self, angle):
