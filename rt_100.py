@@ -12,6 +12,86 @@ import os
 import argparse
 import numpy as np
 import RPi.GPIO as GPIO
+from fastapi import FastAPI, Response
+from fastapi.responses import HTMLResponse
+import uvicorn
+import threading
+import shutil
+from pathlib import Path
+
+app = FastAPI()
+detector_instance = None  # Global reference to detector for API access
+
+@app.get("/show")
+async def show_image():
+    """Show the most recent captured image with optional list of all images"""
+    # Check if show.png exists
+    if not os.path.exists("show.png"):
+        return HTMLResponse(content="<h1>No image captured yet</h1>", status_code=200)
+    
+    # Build HTML response
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Rat Detector - Latest Image</title>
+        <meta http-equiv="refresh" content="5">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            img { max-width: 100%; height: auto; border: 2px solid #333; }
+            .links { margin-top: 20px; }
+            .links a { display: block; margin: 5px 0; color: #0066cc; }
+            h2 { color: #333; }
+        </style>
+    </head>
+    <body>
+        <h1>Latest Captured Image</h1>
+        <img src="/show.png" alt="Latest capture">
+        <p>Auto-refreshing every 5 seconds...</p>
+    """
+    
+    # Add image list if keep_images is enabled
+    if detector_instance and detector_instance.keep_images_enabled:
+        image_list = detector_instance.get_image_list()
+        if image_list:
+            html_content += """
+        <div class="links">
+            <h2>Captured Images:</h2>
+    """
+            for img_path in image_list[-50:]:  # Show last 50 images to avoid huge lists
+                filename = os.path.basename(img_path)
+                html_content += f'            <a href="/{img_path}">{filename}</a>\n'
+            html_content += "        </div>\n"
+    
+    html_content += """
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)
+
+@app.get("/show.png")
+async def get_latest_image():
+    """Serve the latest captured image"""
+    if not os.path.exists("show.png"):
+        return Response(content="No image available", status_code=404)
+    
+    with open("show.png", "rb") as f:
+        image_data = f.read()
+    
+    return Response(content=image_data, media_type="image/png")
+
+@app.get("/captures/{file_path:path}")
+async def get_captured_image(file_path: str):
+    """Serve a specific captured image"""
+    full_path = f"captures/{file_path}"
+    if not os.path.exists(full_path):
+        return Response(content="Image not found", status_code=404)
+    
+    with open(full_path, "rb") as f:
+        image_data = f.read()
+    
+    return Response(content=image_data, media_type="image/jpeg")
 
 class RatDetector:
     def __init__(self, model_path, servo_pin=14, servo_enabled=False, confidence_threshold=0.5, allow_multiple_triggers=False):
@@ -32,6 +112,8 @@ class RatDetector:
         self.servo_position = 0  # Track current servo position
         self.servo_triggered = False  # Track if servo has been triggered
         self.allow_multiple_triggers = allow_multiple_triggers
+        self.image_list_file = "captured_images.txt"  # File to track captured images
+        self.keep_images_enabled = False  # Will be set when run() is called
         
         # Initialize servo if enabled
         if self.servo_enabled:
@@ -41,6 +123,23 @@ class RatDetector:
             self.servo.start(0)
             self.set_servo_angle(25)  # Start
             
+    def add_image_to_list(self, image_path):
+        """Add image path to the list file"""
+        with open(self.image_list_file, 'a') as f:
+            f.write(f"{image_path}\n")
+    
+    def get_image_list(self):
+        """Read the list of captured images from file"""
+        if not os.path.exists(self.image_list_file):
+            return []
+        with open(self.image_list_file, 'r') as f:
+            return [line.strip() for line in f if line.strip() and os.path.exists(line.strip())]
+    
+    def clear_image_list(self):
+        """Clear the image list file"""
+        if os.path.exists(self.image_list_file):
+            os.remove(self.image_list_file)
+    
     def set_servo_angle(self, angle):
         """
         Set servo to specific angle
@@ -148,6 +247,12 @@ class RatDetector:
             capture_interval: Time between captures in seconds
             keep_images: Whether to keep captured images
         """
+        self.keep_images_enabled = keep_images
+        
+        # Clear the image list file on startup if keep_images is enabled
+        if keep_images:
+            self.clear_image_list()
+        
         # Initialize camera
         picam2 = Picamera2()
         
@@ -177,6 +282,13 @@ class RatDetector:
                 # Capture image
                 image_path = self.capture_image(picam2)
                 print(f"Captured: {image_path}")
+                
+                # Copy to show.png for web display
+                shutil.copy2(image_path, "show.png")
+                
+                # Add to image list if keeping images
+                if keep_images:
+                    self.add_image_to_list(image_path)
                 
                 # Run inference
                 detections, inference_time = self.run_inference(image_path)
@@ -234,6 +346,10 @@ class RatDetector:
                 self.servo.stop()
                 GPIO.cleanup()
 
+def run_api_server(host="0.0.0.0", port=8000):
+    """Run the FastAPI server in a separate thread"""
+    uvicorn.run(app, host=host, port=port, log_level="error")
+
 def main():
     parser = argparse.ArgumentParser(description="Real-time rat detection with servo control")
     
@@ -257,9 +373,16 @@ def main():
     parser.add_argument("--keep-images", action="store_true",
                        help="Keep captured images (default: delete after processing)")
     
+    # API settings
+    parser.add_argument("--api-host", type=str, default="0.0.0.0",
+                       help="Host for FastAPI server")
+    parser.add_argument("--api-port", type=int, default=8000,
+                       help="Port for FastAPI server")
+    
     args = parser.parse_args()
     
-    # Create detector
+    # Create detector and set global instance
+    global detector_instance
     detector = RatDetector(
         model_path=args.model,
         servo_pin=args.servo_pin,
@@ -267,6 +390,16 @@ def main():
         confidence_threshold=args.confidence,
         allow_multiple_triggers=args.allow_multiple_triggers
     )
+    detector_instance = detector
+    
+    # Start API server in a separate thread
+    api_thread = threading.Thread(
+        target=run_api_server,
+        args=(args.api_host, args.api_port),
+        daemon=True
+    )
+    api_thread.start()
+    print(f"FastAPI server started at http://{args.api_host}:{args.api_port}/show")
     
     # Run detection loop
     detector.run(
