@@ -18,6 +18,7 @@ import uvicorn
 import threading
 import shutil
 from pathlib import Path
+from PIL import Image
 
 app = FastAPI()
 detector_instance = None  # Global reference to detector for API access
@@ -190,6 +191,12 @@ class RatDetector:
         
         # Capture the image
         picam2.capture_file(filename)
+        
+        # Flip the image 180 degrees (rotate)
+        img = Image.open(filename)
+        img_rotated = img.rotate(180)
+        img_rotated.save(filename)
+        
         return filename
         
     def run_inference(self, image_path):
@@ -354,8 +361,8 @@ def main():
     parser = argparse.ArgumentParser(description="Real-time rat detection with servo control")
     
     # Model settings
-    parser.add_argument("--model", "-m", type=str, default="yolov8n.pt",
-                       help="Path to YOLO model (e.g., runs/train/rat_detector/weights/best.pt)")
+    parser.add_argument("--model", "-m", type=str, default="runs/yolo8n-2025-08-17/weights/best.pt",
+                       help="Path to YOLO model (e.g., runs/yolo8n-2025-08-17/weights/best.pt)")
     parser.add_argument("--confidence", "-c", type=float, default=0.5,
                        help="Confidence threshold for detection")
     
