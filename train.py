@@ -5,11 +5,14 @@ from pathlib import Path
 
 def train_yolo(args):
     """
-    Train a YOLOv8 model on the rat detection dataset
+    Train a YOLO model on the rat detection dataset
     """
     
-    # Select model size
-    model_name = f"yolov8{args.model_size}.pt"
+    # Select model size and version
+    if args.model_version == "11":
+        model_name = f"yolo11{args.model_size}.pt"
+    else:
+        model_name = f"yolov8{args.model_size}.pt"
     print(f"Using model: {model_name}")
     
     # Load a model
@@ -93,9 +96,12 @@ def train_yolo(args):
     return model, results
 
 def main():
-    parser = argparse.ArgumentParser(description="Train YOLOv8 for rat detection")
+    parser = argparse.ArgumentParser(description="Train YOLO for rat detection")
     
     # Model configuration
+    parser.add_argument("--model-version", type=str, default="11",
+                       choices=["8", "11"],
+                       help="YOLO version to use (8 or 11)")
     parser.add_argument("--model-size", type=str, default="n", 
                        choices=["n", "s", "m", "l", "x"],
                        help="Model size: n(nano), s(small), m(medium), l(large), x(extra-large)")
@@ -198,10 +204,10 @@ def main():
                        help="Generate plots")
     
     # Other settings
-    parser.add_argument("--project", type=str, default="runs/train",
+    parser.add_argument("--project", type=str, default="runs",
                        help="Project name")
-    parser.add_argument("--name", type=str, default="rat_detector",
-                       help="Experiment name")
+    parser.add_argument("--name", type=str, default=None,
+                       help="Experiment name (auto-generated if not specified)")
     parser.add_argument("--exist-ok", type=bool, default=False,
                        help="Overwrite existing experiment")
     parser.add_argument("--verbose", type=bool, default=True,
@@ -221,6 +227,13 @@ def main():
                        help="Export format after training")
     
     args = parser.parse_args()
+    
+    # Auto-generate name if not specified
+    if args.name is None:
+        from datetime import datetime
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        model_str = f"yolo{args.model_version}{args.model_size}"
+        args.name = f"{model_str}-{date_str}"
     
     # Train the model
     model, results = train_yolo(args)

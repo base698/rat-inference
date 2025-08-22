@@ -249,7 +249,7 @@ def main():
     parser.add_argument("--output", "-o", type=str, default=None,
                        help="Path to save output (annotated image/video)")
     parser.add_argument("--model", "-m", type=str, default="yolov8n.pt",
-                       help="Path to YOLO model (e.g., yolov8n.pt, runs/train/rat_detector/weights/best.pt)")
+                       help="Path to YOLO model (e.g., yolov8n.pt, runs/yolo8n-2025-08-17/weights/best.pt)")
     
     # Inference settings
     parser.add_argument("--conf", type=float, default=0.25,
