@@ -275,9 +275,9 @@ class RatDetector:
         # Set manual AWB mode to prevent red tint
         picam2.set_controls({
             "AwbMode": 0,  # Manual white balance
-            "ColourGains": (1.5, 1.5),  # Neutral color gains
-            "ExposureTime": 10000,  # Fixed exposure time in microseconds
-            "AnalogueGain": 1.0  # Low gain to reduce noise
+            "ColourGains": (2.2, 2.0),  # Increased color gains for brighter image
+            "ExposureTime": 15000,  # Increased exposure time for more light
+            "AnalogueGain": 2.0  # Increased gain for brightness
         })
         
         picam2.start()

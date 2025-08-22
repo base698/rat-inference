@@ -897,6 +897,7 @@ name = "inference-test"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "inference" },
     { name = "pillow" },
     { name = "ultralytics" },
@@ -904,6 +905,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.110.3" },
     { name = "inference", specifier = ">=0.51.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "ultralytics", specifier = ">=8.3.179" },
