@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "inference>=0.51.0",
+    "picamera2>=0.3.30",
     "pillow>=10.0.0",
     "ultralytics>=8.3.179",
 ]
