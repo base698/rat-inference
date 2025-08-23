@@ -6,8 +6,10 @@ CURRENT_TIME=$(date +"%kh%M" | sed 's/ //g')
 # Create log filename with current time
 LOG_FILE="rt_100-2050-08-22-${CURRENT_TIME}.log"
 
+source .venv/bin/activate
+
 # Run the YOLO command in background with nohup
-nohup python rt_100.py \
+nohup python -u rt_100.py \
     --model runs/yolo11n-2025-08-21/weights/best.pt \
     --keep-images \
     --confidence 0.9 \
