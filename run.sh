@@ -7,7 +7,7 @@ CURRENT_TIME=$(date +"%kh%M" | sed 's/ //g')
 LOG_FILE="rt_100-2050-08-22-${CURRENT_TIME}.log"
 
 # Run the YOLO command in background with nohup
-nohup python your_script.py \
+nohup python rt_100.py \
     --model runs/yolo11n-2025-08-21/weights/best.pt \
     --keep-images \
     --confidence 0.9 \
