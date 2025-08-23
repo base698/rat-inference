@@ -270,6 +270,19 @@ class RatDetector:
             display="lores"
         )
         picam2.configure(config)
+        
+        # Disable IR LED and adjust camera settings to prevent red glow
+        # Set manual AWB mode to prevent red tint
+        picam2.set_controls({
+            "AwbMode": 1,  # Manual white balance
+            "ColourGains": (1.0, 1.0),  # Increased color gains for brighter image
+            "ExposureTime": 25000,  # Increased exposure time for more light
+            "AnalogueGain": 1.4,  # Increased gain for brightness
+            "Sharpness": 1.0,
+            "Contrast": 1.3,
+            "Brightness": 0.3
+        })
+        
         picam2.start()
         
         print("Starting real-time rat detection...")
