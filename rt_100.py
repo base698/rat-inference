@@ -485,7 +485,7 @@ def main():
     # Model settings
     parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-08-24/weights/best.pt",
                        help="Path to YOLO model (e.g., runs/yolo8n-2025-08-24/weights/best.pt)")
-    parser.add_argument("--confidence", "-c", type=float, default=0.8,
+    parser.add_argument("--confidence", "-c", type=float, default=0.85,
                        help="Confidence threshold for detection")
     
     # Servo settings
