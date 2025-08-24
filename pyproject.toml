@@ -5,8 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "fastapi>=0.115.14",
     "inference>=0.51.0",
     "picamera2>=0.3.30",
     "pillow>=10.0.0",
     "ultralytics>=8.3.179",
+    "uvicorn>=0.35.0",
 ]
