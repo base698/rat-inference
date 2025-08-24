@@ -274,10 +274,13 @@ class RatDetector:
         # Disable IR LED and adjust camera settings to prevent red glow
         # Set manual AWB mode to prevent red tint
         picam2.set_controls({
-            "AwbMode": 0,  # Manual white balance
-            "ColourGains": (2.2, 2.0),  # Increased color gains for brighter image
-            "ExposureTime": 15000,  # Increased exposure time for more light
-            "AnalogueGain": 2.0  # Increased gain for brightness
+            "AwbMode": 1,  # Manual white balance
+            "ColourGains": (1.0, 1.0),  # Increased color gains for brighter image
+            "ExposureTime": 25000,  # Increased exposure time for more light
+            "AnalogueGain": 1.4,  # Increased gain for brightness
+            "Sharpness": 1.0,
+            "Contrast": 1.3,
+            "Brightness": 0.3
         })
         
         picam2.start()
@@ -371,9 +374,9 @@ def main():
     parser = argparse.ArgumentParser(description="Real-time rat detection with servo control")
     
     # Model settings
-    parser.add_argument("--model", "-m", type=str, default="runs/yolo8n-2025-08-17/weights/best.pt",
-                       help="Path to YOLO model (e.g., runs/yolo8n-2025-08-17/weights/best.pt)")
-    parser.add_argument("--confidence", "-c", type=float, default=0.5,
+    parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-08-24/weights/best.pt",
+                       help="Path to YOLO model (e.g., runs/yolo8n-2025-08-24/weights/best.pt)")
+    parser.add_argument("--confidence", "-c", type=float, default=0.8,
                        help="Confidence threshold for detection")
     
     # Servo settings
