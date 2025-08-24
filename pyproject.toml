@@ -3,11 +3,12 @@ name = "inference-test"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11,<3.13"  # bump this if your Pi is on 3.12
 dependencies = [
     "fastapi>=0.110.3",
     "inference>=0.51.0",
-    "picamera2>=0.3.30",
     "pillow>=10.0.0",
     "ultralytics>=8.3.179",
+    "picamera2>=0.3.30; sys_platform == 'linux'",
+
 ]
