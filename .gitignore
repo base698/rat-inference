@@ -9,3 +9,5 @@ wheels/
 
 # Virtual environments
 .venv
+captures/
+captured_images.txt
