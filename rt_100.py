@@ -13,7 +13,7 @@ import argparse
 import numpy as np
 import RPi.GPIO as GPIO
 from fastapi import FastAPI, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import threading
 import shutil
@@ -43,12 +43,90 @@ async def show_image():
             .links { margin-top: 20px; }
             .links a { display: block; margin: 5px 0; color: #0066cc; }
             h2 { color: #333; }
+            .servo-button {
+                background-color: #4CAF50;
+                border: none;
+                color: white;
+                padding: 15px 32px;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 16px;
+                margin: 10px 2px;
+                cursor: pointer;
+                border-radius: 4px;
+            }
+            .servo-button:hover {
+                background-color: #45a049;
+            }
+            .servo-button:disabled {
+                background-color: #cccccc;
+                cursor: not-allowed;
+            }
+            .servo-status {
+                margin: 10px 0;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            .servo-status.success {
+                background-color: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .servo-status.error {
+                background-color: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+            .servo-status.info {
+                background-color: #d1ecf1;
+                color: #0c5460;
+                border: 1px solid #bee5eb;
+            }
         </style>
+        <script>
+            async function triggerServo() {
+                const button = document.getElementById('servoButton');
+                const status = document.getElementById('servoStatus');
+                
+                button.disabled = true;
+                status.className = 'servo-status info';
+                status.innerHTML = 'Triggering servo...';
+                status.style.display = 'block';
+                
+                try {
+                    const response = await fetch('/trigger-servo', {
+                        method: 'POST'
+                    });
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        status.className = 'servo-status success';
+                        status.innerHTML = result.message;
+                    } else {
+                        status.className = 'servo-status error';
+                        status.innerHTML = result.message;
+                    }
+                } catch (error) {
+                    status.className = 'servo-status error';
+                    status.innerHTML = 'Error: ' + error.message;
+                } finally {
+                    setTimeout(() => {
+                        button.disabled = false;
+                    }, 3000);
+                }
+            }
+        </script>
     </head>
     <body>
         <h1>Latest Captured Image</h1>
         <img src="/show.png" alt="Latest capture">
         <p>Auto-refreshing every 5 seconds...</p>
+        
+        <div>
+            <button id="servoButton" class="servo-button" onclick="triggerServo()">Trigger Servo</button>
+            <div id="servoStatus" class="servo-status" style="display: none;"></div>
+        </div>
     """
     
     # Add image list if keep_images is enabled
@@ -93,6 +171,37 @@ async def get_captured_image(file_path: str):
         image_data = f.read()
     
     return Response(content=image_data, media_type="image/jpeg")
+
+@app.post("/trigger-servo")
+async def trigger_servo():
+    """Manually trigger the servo if enabled"""
+    if not detector_instance:
+        return JSONResponse(
+            content={"success": False, "message": "Detector not initialized"},
+            status_code=500
+        )
+    
+    if not detector_instance.servo_enabled:
+        return JSONResponse(
+            content={"success": False, "message": "Servo is not enabled. Run with --enable-servo flag to enable."},
+            status_code=400
+        )
+    
+    try:
+        # Trigger the servo
+        detector_instance.move_servo_forward()
+        time.sleep(3)  # Hold position for 3 seconds
+        detector_instance.move_servo_backward()
+        
+        return JSONResponse(
+            content={"success": True, "message": "Servo triggered successfully!"},
+            status_code=200
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={"success": False, "message": f"Error triggering servo: {str(e)}"},
+            status_code=500
+        )
 
 class RatDetector:
     def __init__(self, model_path, servo_pin=14, servo_enabled=False, confidence_threshold=0.5, allow_multiple_triggers=False):
