@@ -8,7 +8,7 @@ LOG_FILE="rt_100-2050-08-22-${CURRENT_TIME}.log"
 
 # Run the YOLO command in background with nohup
 # -u flag forces unbuffered output so print statements appear immediately
-nohup python -u your_script.py \
+nohup uv run python -u rt_100.py \
     --model runs/yolo11n-2025-08-24/weights/best.pt \
     --keep-images \
     --confidence 0.85 \
