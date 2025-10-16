@@ -22,15 +22,21 @@ import numpy as np
 # Set library path for macOS
 os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
 
-# Try importing Raspberry Pi specific libraries
+# Try importing OpenCV for camera
 try:
-    from picamera2 import Picamera2
-    from PIL import Image
-    import RPi.GPIO as GPIO
-    RPI_AVAILABLE = True
+    import cv2
+    CV2_AVAILABLE = True
 except ImportError:
-    RPI_AVAILABLE = False
-    print("Raspberry Pi libraries not available - camera and GPIO features disabled")
+    CV2_AVAILABLE = False
+    print("OpenCV not available - camera features disabled")
+
+# Try importing GPIO library
+try:
+    import RPi.GPIO as GPIO
+    GPIO_AVAILABLE = True
+except ImportError:
+    GPIO_AVAILABLE = False
+    print("GPIO library not available - trigger servo features disabled")
 
 # Try importing YOLO
 try:
@@ -63,7 +69,14 @@ PITCH_MAX = 600  # Maximum pitch position (~55 degrees down, raw)
 PITCH_CENTER = 0 # Start at level position
 
 # GPIO servo configuration (trigger servo)
-TRIGGER_SERVO_PIN = 4  # GPIO4 for trigger servo
+TRIGGER_SERVO_PIN = 14  # GPIO14 for trigger servo
+
+# Tracking configuration
+TARGET_CROSSHAIR_X = 320  # Center X position for target (640/2)
+TARGET_CROSSHAIR_Y = 240  # Center Y position for target (480/2)
+CROSSHAIR_SIZE = 20       # Size of crosshair in pixels
+VIDEO_FPS = 30            # Video display frame rate
+INFERENCE_FPS = 15        # Inference frame rate
 
 @app.get("/")
 async def root():
@@ -417,9 +430,9 @@ async def root():
                 getStatus();
                 setInterval(getStatus, 2000);
 
-                // Update stream at 2 FPS
+                // Update stream at ~15 FPS for smooth display
                 updateStream();
-                setInterval(updateStream, 500);
+                setInterval(updateStream, 66);  // ~15 FPS (1000ms / 15)
             }};
         </script>
     </head>
@@ -597,7 +610,8 @@ async def trigger_servo():
 class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
-                 model_path=None, confidence_threshold=0.85):
+                 model_path=None, confidence_threshold=0.85, camera_id=0,
+                 use_csi=False):
         """
         Initialize the camera tracker
 
@@ -605,10 +619,12 @@ class CameraTracker:
             port: Serial port for servo connection
             enable_servos: Whether to actually control tracking servos
             no_connect: Skip connection attempt entirely
-            enable_camera: Enable Raspberry Pi camera
+            enable_camera: Enable camera
             enable_trigger: Enable GPIO trigger servo
             model_path: Path to YOLO model
             confidence_threshold: Detection confidence threshold
+            camera_id: Camera device ID (0 for USB, varies for CSI)
+            use_csi: Use CSI camera with GStreamer pipeline (Jetson)
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -617,20 +633,25 @@ class CameraTracker:
         self.motor_bus = None
 
         # Camera and detection
-        self.enable_camera = enable_camera and RPI_AVAILABLE
+        self.enable_camera = enable_camera and CV2_AVAILABLE
         self.camera_active = False
-        self.picam2 = None
+        self.camera = None
+        self.camera_id = camera_id
+        self.use_csi = use_csi
         self.model = None
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
+        self.latest_bbox = None  # Store latest bounding box (x1, y1, x2, y2)
+        self.latest_center_point = None  # Store latest center point (x, y)
         self.recent_detections = []
         self.frame_lock = threading.Lock()
+        self.inference_lock = threading.Lock()
 
         # Trigger servo
-        self.trigger_servo_enabled = enable_trigger and RPI_AVAILABLE
+        self.trigger_servo_enabled = enable_trigger and GPIO_AVAILABLE
         self.trigger_servo = None
 
         # Current positions for tracking servos
@@ -656,9 +677,11 @@ class CameraTracker:
         if self.model_path and YOLO_AVAILABLE:
             self.init_model()
 
-        # Start camera thread if everything is ready
+        # Start camera and inference threads if everything is ready
         if self.camera_active:
             self.start_camera_thread()
+            if self.model:
+                self.start_inference_thread()
 
     def init_trigger_servo(self):
         """Initialize GPIO trigger servo"""
@@ -699,36 +722,54 @@ class CameraTracker:
         self.set_trigger_angle(25)  # Return to neutral
         print("Trigger complete")
 
+    def gstreamer_pipeline(self, sensor_id=0, capture_width=1280, capture_height=720,
+                           display_width=640, display_height=480, framerate=30, flip_method=0):
+        """
+        Generate GStreamer pipeline for Jetson CSI camera
+        """
+        return (
+            f"nvarguscamerasrc sensor-id={sensor_id} ! "
+            f"video/x-raw(memory:NVMM), width=(int){capture_width}, height=(int){capture_height}, "
+            f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
+            f"nvvidconv flip-method={flip_method} ! "
+            f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
+            f"videoconvert ! "
+            f"video/x-raw, format=(string)BGR ! appsink"
+        )
+
     def init_camera(self):
-        """Initialize Raspberry Pi camera"""
+        """Initialize camera (USB or CSI)"""
         try:
-            self.picam2 = Picamera2()
+            if self.use_csi:
+                # Use GStreamer pipeline for Jetson CSI camera
+                pipeline = self.gstreamer_pipeline(
+                    sensor_id=self.camera_id,
+                    capture_width=1280,
+                    capture_height=720,
+                    display_width=640,
+                    display_height=480,
+                    framerate=VIDEO_FPS,
+                    flip_method=2  # 0=none, 2=rotate-180
+                )
+                self.camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+                print(f"✓ CSI Camera initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS)")
+            else:
+                # Use regular USB camera
+                self.camera = cv2.VideoCapture(self.camera_id)
+                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.camera.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
+                print(f"✓ USB Camera {self.camera_id} initialized (640x480 @ {VIDEO_FPS} FPS)")
 
-            # Configure camera for lower resolution (2 FPS optimization)
-            config = self.picam2.create_still_configuration(
-                main={"size": (640, 480)},  # Lower resolution for 2 FPS
-                lores={"size": (320, 240)},
-                display="lores"
-            )
-            self.picam2.configure(config)
+            if not self.camera.isOpened():
+                raise Exception("Failed to open camera")
 
-            # Camera settings
-            self.picam2.set_controls({
-                "AwbMode": 1,
-                "ColourGains": (1.0, 1.0),
-                "ExposureTime": 25000,
-                "AnalogueGain": 1.4,
-                "Sharpness": 1.0,
-                "Contrast": 1.3,
-                "Brightness": 0.3
-            })
-
-            self.picam2.start()
             self.camera_active = True
-            print("✓ Camera initialized (640x480 @ 2 FPS)")
+
         except Exception as e:
             print(f"Failed to initialize camera: {e}")
             self.camera_active = False
+            self.camera = None
 
     def init_model(self):
         """Initialize YOLO model"""
@@ -809,76 +850,188 @@ class CameraTracker:
         if self.enable_servos:
             self.raw_write("pitch", position)
 
-    def process_frame(self):
-        """Capture and process a frame"""
-        if not self.camera_active or not self.picam2:
+    def draw_overlays(self, frame):
+        """Draw crosshair, bounding box, and center point on image (OpenCV)"""
+        # Draw target crosshair (fixed position)
+        ch_x, ch_y = TARGET_CROSSHAIR_X, TARGET_CROSSHAIR_Y
+        ch_size = CROSSHAIR_SIZE
+
+        # Crosshair lines in green (BGR format)
+        cv2.line(frame, (ch_x - ch_size, ch_y), (ch_x + ch_size, ch_y), (0, 255, 0), 2)
+        cv2.line(frame, (ch_x, ch_y - ch_size), (ch_x, ch_y + ch_size), (0, 255, 0), 2)
+        # Crosshair circle
+        cv2.circle(frame, (ch_x, ch_y), 5, (0, 255, 0), 2)
+
+        # Draw bounding box and center point if detection exists
+        with self.inference_lock:
+            if self.latest_bbox is not None:
+                x1, y1, x2, y2 = self.latest_bbox
+                # Draw bounding box in red (BGR)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
+            if self.latest_center_point is not None:
+                cx, cy = self.latest_center_point
+                # Draw center point in blue (BGR)
+                cv2.circle(frame, (cx, cy), 8, (255, 0, 0), -1)  # Filled circle
+                cv2.circle(frame, (cx, cy), 8, (255, 255, 255), 2)  # White outline
+                # Draw line from center to target in yellow (BGR)
+                cv2.line(frame, (cx, cy), (ch_x, ch_y), (0, 255, 255), 2)
+
+        return frame
+
+    def observe(self, center_x, center_y):
+        """
+        Observe function that takes detected rat center point and returns updated servo coordinates
+        This function calculates the error between the target crosshair and the detected center,
+        then returns the desired servo positions to center the rat in the view.
+
+        Args:
+            center_x: X coordinate of detected rat center
+            center_y: Y coordinate of detected rat center
+
+        Returns:
+            tuple: (desired_yaw, desired_pitch) servo positions
+        """
+        # Calculate error from target crosshair
+        error_x = center_x - TARGET_CROSSHAIR_X
+        error_y = center_y - TARGET_CROSSHAIR_Y
+
+        # Proportional gain for servo control (tune these values)
+        # Positive error_x means rat is to the right, need to move yaw right (increase)
+        # Positive error_y means rat is below center, need to move pitch down (increase)
+        yaw_gain = 2.0   # Adjust based on your servo sensitivity
+        pitch_gain = 1.5  # Adjust based on your servo sensitivity
+
+        # Calculate desired positions
+        desired_yaw = self.current_yaw + int(error_x * yaw_gain)
+        desired_pitch = self.current_pitch + int(error_y * pitch_gain)
+
+        # Clamp to valid ranges
+        desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
+        desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
+
+        return desired_yaw, desired_pitch
+
+    def capture_video_frame(self):
+        """Capture a video frame at 30 FPS with overlays"""
+        if not self.camera_active or not self.camera:
             return
 
         try:
             # Capture frame
-            image = self.picam2.capture_image("main")
+            ret, frame = self.camera.read()
+            if not ret:
+                return
 
-            # Rotate 180 degrees
-            image = image.rotate(180)
+            # Rotate 180 degrees if not using CSI with flip_method
+            if not self.use_csi:
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
 
-            # Run inference if model is available
-            detection = False
-            confidence = 0
+            # Draw overlays
+            frame = self.draw_overlays(frame)
 
-            if self.model:
-                # Save temporary file for inference
-                temp_path = "temp_frame.jpg"
-                image.save(temp_path)
-
-                # Run inference
-                results = self.model(temp_path, conf=self.confidence_threshold, verbose=False)
-
-                # Check for detections
-                for r in results:
-                    if r.boxes is not None and len(r.boxes) > 0:
-                        for box in r.boxes:
-                            cls = int(box.cls)
-                            conf = float(box.conf)
-                            class_name = self.model.names[cls] if cls < len(self.model.names) else f"Class_{cls}"
-
-                            # Check if it's a rat
-                            if 'rat' in class_name.lower() or cls == 0:
-                                detection = True
-                                confidence = max(confidence, conf)
-
-                                # Save detection
-                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                                detection_path = f"detections/detection_{timestamp}.jpg"
-                                shutil.copy2(temp_path, detection_path)
-
-                                self.detection_count += 1
-                                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {conf:.3f})"
-                                self.recent_detections.append(detection_msg)
-                                self.recent_detections = self.recent_detections[-10:]  # Keep last 10
-
-                                print(f"🐀 Detection saved: {detection_path}")
-
-                                # Trigger servo if enabled and detection is new
-                                if detection and not self.latest_detection and self.trigger_servo_enabled:
-                                    threading.Thread(target=self.trigger_action_servo, daemon=True).start()
-
-                # Clean up temp file
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+            # Convert to JPEG
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ret:
+                return
 
             # Convert to base64 for streaming
-            buffer = io.BytesIO()
-            image.save(buffer, format='JPEG', quality=70)  # Lower quality for faster streaming
-            img_str = base64.b64encode(buffer.getvalue()).decode()
+            img_str = base64.b64encode(buffer).decode()
 
             # Update latest frame
             with self.frame_lock:
                 self.latest_frame = img_str
-                self.latest_detection = detection
-                self.latest_confidence = confidence
 
         except Exception as e:
-            print(f"Frame processing error: {e}")
+            print(f"Video frame capture error: {e}")
+
+    def run_inference(self):
+        """Run inference at 15 FPS"""
+        if not self.camera_active or not self.camera or not self.model:
+            return
+
+        try:
+            # Capture frame
+            ret, frame = self.camera.read()
+            if not ret:
+                return
+
+            # Rotate 180 degrees if not using CSI with flip_method
+            if not self.use_csi:
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+
+            # Save temporary file for inference
+            temp_path = "temp_inference.jpg"
+            cv2.imwrite(temp_path, frame)
+
+            # Run inference (YOLO can work directly with numpy arrays or file paths)
+            results = self.model(temp_path, conf=self.confidence_threshold, verbose=False)
+
+            # Process detections
+            detection = False
+            confidence = 0
+            bbox = None
+            center_point = None
+
+            for r in results:
+                if r.boxes is not None and len(r.boxes) > 0:
+                    for box in r.boxes:
+                        cls = int(box.cls)
+                        conf = float(box.conf)
+                        class_name = self.model.names[cls] if cls < len(self.model.names) else f"Class_{cls}"
+
+                        # Check if it's a rat
+                        if 'rat' in class_name.lower() or cls == 0:
+                            detection = True
+                            confidence = max(confidence, conf)
+
+                            # Get bounding box coordinates
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                            bbox = (int(x1), int(y1), int(x2), int(y2))
+
+                            # Calculate center point
+                            center_x = int((x1 + x2) / 2)
+                            center_y = int((y1 + y2) / 2)
+                            center_point = (center_x, center_y)
+
+                            # Save detection
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                            detection_path = f"detections/detection_{timestamp}.jpg"
+                            shutil.copy2(temp_path, detection_path)
+
+                            self.detection_count += 1
+                            detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {conf:.3f}) at ({center_x}, {center_y})"
+                            self.recent_detections.append(detection_msg)
+                            self.recent_detections = self.recent_detections[-10:]
+
+                            print(f"🐀 Detection #{self.detection_count}: {detection_path}")
+                            print(f"   Center: ({center_x}, {center_y}), Confidence: {conf:.3f}")
+
+                            # Get updated servo positions from observe function
+                            desired_yaw, desired_pitch = self.observe(center_x, center_y)
+                            print(f"   Servo update: Yaw {self.current_yaw} -> {desired_yaw}, Pitch {self.current_pitch} -> {desired_pitch}")
+
+                            # Update servo positions
+                            self.set_yaw(desired_yaw)
+                            self.set_pitch(desired_pitch)
+
+                            # Trigger servo if enabled and detection is new
+                            if detection and not self.latest_detection and self.trigger_servo_enabled:
+                                threading.Thread(target=self.trigger_action_servo, daemon=True).start()
+
+            # Update detection state
+            with self.inference_lock:
+                self.latest_detection = detection
+                self.latest_confidence = confidence
+                self.latest_bbox = bbox
+                self.latest_center_point = center_point
+
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        except Exception as e:
+            print(f"Inference error: {e}")
 
     def get_latest_frame(self):
         """Get the latest processed frame data"""
@@ -891,29 +1044,40 @@ class CameraTracker:
             }
 
     def camera_thread(self):
-        """Camera processing thread (2 FPS)"""
+        """Camera processing thread for video at 30 FPS"""
         while self.camera_active:
-            self.process_frame()
-            time.sleep(0.5)  # 2 FPS
+            self.capture_video_frame()
+            time.sleep(1.0 / VIDEO_FPS)  # 30 FPS
+
+    def inference_thread(self):
+        """Inference processing thread at 15 FPS"""
+        while self.camera_active:
+            self.run_inference()
+            time.sleep(1.0 / INFERENCE_FPS)  # 15 FPS
 
     def start_camera_thread(self):
         """Start the camera processing thread"""
         thread = threading.Thread(target=self.camera_thread, daemon=True)
         thread.start()
-        print("Camera thread started (2 FPS)")
+        print(f"Camera thread started ({VIDEO_FPS} FPS)")
+
+    def start_inference_thread(self):
+        """Start the inference processing thread"""
+        thread = threading.Thread(target=self.inference_thread, daemon=True)
+        thread.start()
+        print(f"Inference thread started ({INFERENCE_FPS} FPS)")
 
     def disconnect(self):
         """Disconnect and cleanup"""
         # Stop camera
-        if self.picam2:
+        if self.camera:
             try:
-                self.picam2.stop()
-                self.picam2.close()
+                self.camera.release()
             except:
                 pass
 
         # Cleanup GPIO
-        if self.trigger_servo_enabled and RPI_AVAILABLE:
+        if self.trigger_servo_enabled and GPIO_AVAILABLE:
             try:
                 if self.trigger_servo:
                     self.trigger_servo.stop()
@@ -949,7 +1113,11 @@ def main():
 
     # Camera and detection settings
     parser.add_argument("--enable-camera", action="store_true",
-                       help="Enable Raspberry Pi camera")
+                       help="Enable camera")
+    parser.add_argument("--camera-id", type=int, default=0,
+                       help="Camera device ID (default: 0)")
+    parser.add_argument("--use-csi", action="store_true",
+                       help="Use CSI camera with GStreamer pipeline (Jetson)")
     parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-08-24/weights/best.pt",
                        help="Path to YOLO model")
     parser.add_argument("--confidence", "-c", type=float, default=0.85,
@@ -976,7 +1144,9 @@ def main():
         enable_camera=args.enable_camera,
         enable_trigger=args.enable_trigger,
         model_path=args.model if args.enable_camera else None,
-        confidence_threshold=args.confidence
+        confidence_threshold=args.confidence,
+        camera_id=args.camera_id,
+        use_csi=args.use_csi
     )
     tracker_instance = tracker
 
@@ -986,6 +1156,9 @@ def main():
     print(f"Tracking servos: {'ENABLED' if not args.disable_servos else 'DISABLED'}")
     print(f"Trigger servo: {'ENABLED' if args.enable_trigger else 'DISABLED'}")
     print(f"Camera: {'ENABLED' if args.enable_camera else 'DISABLED'}")
+    if args.enable_camera:
+        camera_type = "CSI (GStreamer)" if args.use_csi else "USB"
+        print(f"Camera type: {camera_type} (ID: {args.camera_id})")
     print(f"Detection: {'ENABLED' if (args.enable_camera and args.model) else 'DISABLED'}")
     if args.enable_camera and args.model:
         print(f"Model: {args.model}")
