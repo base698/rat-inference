@@ -14,21 +14,19 @@ COPY *.pt ./
 # Copy runs directory with trained models
 COPY runs ./runs
 
-# Install Python dependencies from pyproject.toml
-# Note: servo libraries (lerobot, feetech-servo-sdk) are excluded due to compatibility issues
-# The code handles their absence gracefully with --no-connect flag
+# Install Python dependencies
+# Note: Only installing packages that are actually used by the code
+# Excluded: lerobot, feetech-servo-sdk (servo control), inference, ncnn, onnx (not imported)
 RUN python3 -m pip install --upgrade pip && \
+    pip install "setuptools<75.0.0" && \
     pip install \
         pillow>=10.0.0 \
         ultralytics>=8.3.179 \
         numpy \
         opencv-python \
-        "inference>=0.35.0,<0.51" \
         supervision \
         fastapi>=0.110.3 \
-        uvicorn \
-        "ncnn>=1.0.20250916" \
-        "onnx>=1.19.0"
+        uvicorn
 
 # Create detections directory for rt_200.py
 RUN mkdir -p detections
