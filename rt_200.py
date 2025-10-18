@@ -1313,7 +1313,7 @@ def main():
     parser = argparse.ArgumentParser(description="Camera tracker with servo control and rat detection")
 
     # Servo settings
-    parser.add_argument("--port", "-p", type=str, default="/dev/cu.usbmodem5A680116511",
+    parser.add_argument("--port", "-p", type=str, default="/dev/ttyACM0",
                        help="Serial port for servo connection")
     parser.add_argument("--disable-servos", action="store_true",
                        help="Disable tracking servo control (simulation mode)")
