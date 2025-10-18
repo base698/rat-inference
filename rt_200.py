@@ -658,6 +658,33 @@ class CameraTracker:
         self.current_yaw = YAW_CENTER
         self.current_pitch = PITCH_CENTER
 
+        # PID controller state
+        self.pid_yaw_integral = 0.0
+        self.pid_pitch_integral = 0.0
+        self.pid_yaw_prev_error = 0.0
+        self.pid_pitch_prev_error = 0.0
+        self.pid_last_time = time.time()
+
+        # PID gains (tune these for your system)
+        self.pid_yaw_kp = 0.3    # Proportional gain for yaw
+        self.pid_yaw_ki = 0.01   # Integral gain for yaw
+        self.pid_yaw_kd = 0.1    # Derivative gain for yaw
+        self.pid_pitch_kp = 0.3  # Proportional gain for pitch
+        self.pid_pitch_ki = 0.01 # Integral gain for pitch
+        self.pid_pitch_kd = 0.1  # Derivative gain for pitch
+
+        # Camera and servo calibration
+        # Assuming camera FOV (field of view) - adjust these based on your camera specs
+        self.camera_fov_horizontal = 60.0  # degrees (typical for many webcams)
+        self.camera_fov_vertical = 45.0    # degrees
+        self.image_width = 640
+        self.image_height = 480
+
+        # Servo range in degrees (estimate - needs calibration)
+        # These are the angular ranges that the servos can physically move
+        self.yaw_range_degrees = 180.0    # Total yaw range in degrees
+        self.pitch_range_degrees = 55.0   # Total pitch range in degrees
+
         # Create detections directory
         os.makedirs("detections", exist_ok=True)
 
@@ -879,36 +906,145 @@ class CameraTracker:
 
         return frame
 
+    def pixels_to_angle(self, pixel_error, image_dimension, fov_degrees):
+        """
+        Convert pixel error to angular error in degrees
+
+        Args:
+            pixel_error: Error in pixels from center
+            image_dimension: Width or height of image in pixels
+            fov_degrees: Field of view in degrees for this dimension
+
+        Returns:
+            Angular error in degrees
+        """
+        # Calculate degrees per pixel
+        degrees_per_pixel = fov_degrees / image_dimension
+        # Convert pixel error to angular error
+        angle_error = pixel_error * degrees_per_pixel
+        return angle_error
+
+    def angle_to_servo_raw(self, angle_delta, axis='yaw'):
+        """
+        Convert angular change (in degrees) to servo raw units
+
+        Args:
+            angle_delta: Desired angular change in degrees
+            axis: 'yaw' or 'pitch'
+
+        Returns:
+            Servo position change in raw units
+        """
+        if axis == 'yaw':
+            # Yaw servo: 1500-3500 raw = 2000 units over yaw_range_degrees
+            raw_range = YAW_MAX - YAW_MIN
+            raw_per_degree = raw_range / self.yaw_range_degrees
+        else:  # pitch
+            # Pitch servo: 0-600 raw = 600 units over pitch_range_degrees
+            raw_range = PITCH_MAX - PITCH_MIN
+            raw_per_degree = raw_range / self.pitch_range_degrees
+
+        # Convert angle to raw units
+        raw_delta = angle_delta * raw_per_degree
+        return int(raw_delta)
+
     def observe(self, center_x, center_y):
         """
-        Observe function that takes detected rat center point and returns updated servo coordinates
-        This function calculates the error between the target crosshair and the detected center,
-        then returns the desired servo positions to center the rat in the view.
+        PID controller that takes detected rat center point and returns updated servo coordinates.
+        Uses proper angle conversions and smooth control to center the rat in the view.
+
+        The controller:
+        1. Converts pixel error to angular error (degrees)
+        2. Applies PID control in the angular domain
+        3. Converts angular corrections to servo raw units
+        4. Smoothly moves servos without overshooting
 
         Args:
             center_x: X coordinate of detected rat center
             center_y: Y coordinate of detected rat center
 
         Returns:
-            tuple: (desired_yaw, desired_pitch) servo positions
+            tuple: (desired_yaw, desired_pitch) servo positions in raw units
         """
-        # Calculate error from target crosshair
-        error_x = center_x - TARGET_CROSSHAIR_X
-        error_y = center_y - TARGET_CROSSHAIR_Y
+        # Calculate time delta for derivative and integral calculations
+        current_time = time.time()
+        dt = current_time - self.pid_last_time
+        self.pid_last_time = current_time
 
-        # Proportional gain for servo control (tune these values)
-        # Positive error_x means rat is to the right, need to move yaw right (increase)
-        # Positive error_y means rat is below center, need to move pitch down (increase)
-        yaw_gain = 2.0   # Adjust based on your servo sensitivity
-        pitch_gain = 1.5  # Adjust based on your servo sensitivity
+        # Prevent division by zero or too small dt
+        if dt < 0.001:
+            dt = 0.001
 
-        # Calculate desired positions
-        desired_yaw = self.current_yaw + int(error_x * yaw_gain)
-        desired_pitch = self.current_pitch + int(error_y * pitch_gain)
+        # Calculate pixel error from target crosshair
+        # Positive error_x means rat is to the right
+        # Positive error_y means rat is below center
+        pixel_error_x = center_x - TARGET_CROSSHAIR_X
+        pixel_error_y = center_y - TARGET_CROSSHAIR_Y
 
-        # Clamp to valid ranges
+        # Convert pixel errors to angular errors (degrees)
+        angle_error_yaw = self.pixels_to_angle(
+            pixel_error_x,
+            self.image_width,
+            self.camera_fov_horizontal
+        )
+        angle_error_pitch = self.pixels_to_angle(
+            pixel_error_y,
+            self.image_height,
+            self.camera_fov_vertical
+        )
+
+        # ===== YAW PID CONTROL =====
+        # Proportional term
+        yaw_p = self.pid_yaw_kp * angle_error_yaw
+
+        # Integral term (accumulated error)
+        self.pid_yaw_integral += angle_error_yaw * dt
+        # Anti-windup: limit integral to prevent excessive buildup
+        max_integral = 10.0  # degrees
+        self.pid_yaw_integral = max(-max_integral, min(max_integral, self.pid_yaw_integral))
+        yaw_i = self.pid_yaw_ki * self.pid_yaw_integral
+
+        # Derivative term (rate of change of error)
+        yaw_d = self.pid_yaw_kd * (angle_error_yaw - self.pid_yaw_prev_error) / dt
+        self.pid_yaw_prev_error = angle_error_yaw
+
+        # Calculate total yaw correction (in degrees)
+        yaw_correction_deg = yaw_p + yaw_i + yaw_d
+
+        # ===== PITCH PID CONTROL =====
+        # Proportional term
+        pitch_p = self.pid_pitch_kp * angle_error_pitch
+
+        # Integral term (accumulated error)
+        self.pid_pitch_integral += angle_error_pitch * dt
+        self.pid_pitch_integral = max(-max_integral, min(max_integral, self.pid_pitch_integral))
+        pitch_i = self.pid_pitch_ki * self.pid_pitch_integral
+
+        # Derivative term (rate of change of error)
+        pitch_d = self.pid_pitch_kd * (angle_error_pitch - self.pid_pitch_prev_error) / dt
+        self.pid_pitch_prev_error = angle_error_pitch
+
+        # Calculate total pitch correction (in degrees)
+        pitch_correction_deg = pitch_p + pitch_i + pitch_d
+
+        # ===== CONVERT ANGULAR CORRECTIONS TO SERVO RAW UNITS =====
+        yaw_correction_raw = self.angle_to_servo_raw(yaw_correction_deg, axis='yaw')
+        pitch_correction_raw = self.angle_to_servo_raw(pitch_correction_deg, axis='pitch')
+
+        # Calculate desired servo positions
+        desired_yaw = self.current_yaw + yaw_correction_raw
+        desired_pitch = self.current_pitch + pitch_correction_raw
+
+        # Clamp to valid servo ranges
         desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
         desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
+
+        # Debug output (optional - can be removed for production)
+        print(f"   PID Debug:")
+        print(f"     Pixel error: X={pixel_error_x:.1f}px, Y={pixel_error_y:.1f}px")
+        print(f"     Angle error: Yaw={angle_error_yaw:.2f}°, Pitch={angle_error_pitch:.2f}°")
+        print(f"     Yaw PID: P={yaw_p:.3f}, I={yaw_i:.3f}, D={yaw_d:.3f} -> {yaw_correction_deg:.3f}° ({yaw_correction_raw} raw)")
+        print(f"     Pitch PID: P={pitch_p:.3f}, I={pitch_i:.3f}, D={pitch_d:.3f} -> {pitch_correction_deg:.3f}° ({pitch_correction_raw} raw)")
 
         return desired_yaw, desired_pitch
 
