@@ -7,6 +7,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
+COPY test_camera.py ./
 
 # Copy model files
 COPY *.pt ./

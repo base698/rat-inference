@@ -14,6 +14,7 @@ usage() {
     echo "  rt200      - Run rt_200.py server (default, with web UI on port 8000)"
     echo "               Add --no-csi to use USB camera mode instead of CSI"
     echo "  inference  - Run inference.py for testing"
+    echo "  test-cam   - Test camera and save test image"
     echo "  shell      - Open a bash shell in the container"
     echo ""
     echo "Examples:"
@@ -94,16 +95,31 @@ run_inference() {
             "${ARGS[@]}"
 }
 
+# Test camera
+test_camera() {
+    echo "Testing camera..."
+    docker run -it --rm \
+        --privileged \
+        --ipc=host \
+        --runtime=nvidia \
+        -v /tmp/argus_socket:/tmp/argus_socket \
+        -v $(pwd):/app/data \
+        --group-add video \
+        $IMAGE_NAME \
+        python3 test_camera.py
+}
+
 # Open a shell in the container
 run_shell() {
     echo "Opening shell in container..."
     docker run -it --rm \
+        --privileged \
         --ipc=host \
         --runtime=nvidia \
         --network=host \
-        --device /dev/video0 \
-        --device /dev/i2c-1 \
+        -v /tmp/argus_socket:/tmp/argus_socket \
         -v $(pwd):/app/data \
+        --group-add video \
         $IMAGE_NAME \
         bash
 }
@@ -120,6 +136,9 @@ case "${1:-rt200}" in
     inference)
         shift
         run_inference "$@"
+        ;;
+    test-cam)
+        test_camera
         ;;
     shell)
         run_shell
