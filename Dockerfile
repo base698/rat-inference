@@ -4,7 +4,7 @@ FROM ultralytics/ultralytics:latest-jetson-jetpack6
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y vim && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y vim busybox && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 # Install Jetson.GPIO with older setuptools to avoid compatibility issues
