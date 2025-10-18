@@ -56,22 +56,15 @@ def setup_servo():
     """Initialize GPIO and PWM for servo control"""
     global pwm_global
 
-    # Configure GPIO13 (Pin 33) as output in pinmux (temporary until reboot)
-    # This is required for Jetson Orin to use GPIO13 for PWM output
-    import subprocess
-    try:
-        print("Configuring GPIO13 (Pin 33) as output in pinmux...")
-        subprocess.run(['busybox', 'devmem', '0x2434040', 'w', '0x4'],
-                      check=True, capture_output=True)
-        print("✓ GPIO13 configured successfully")
-    except subprocess.CalledProcessError as e:
-        print(f"Warning: Could not configure pin (may need sudo): {e}")
-        print("  Run this on the host if servos don't work:")
-        print("  sudo busybox devmem 0x2434040 w 0x4")
-    except FileNotFoundError:
-        print("Warning: busybox not found, pin may not be configured correctly")
+    print(f"Setting up GPIO{SERVO_PIN} for PWM output...")
+    print("Note: If you see a pinmux warning, run the suggested busybox devmem command\n")
 
     GPIO.setmode(GPIO.BCM)  # Use BCM GPIO numbering for Jetson
+
+    # Set warnings to capture pinmux configuration instructions
+    import warnings
+    warnings.simplefilter('always')
+
     GPIO.setup(SERVO_PIN, GPIO.OUT)
     
     # Create PWM instance
