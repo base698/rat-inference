@@ -22,6 +22,7 @@ COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
 COPY test_camera.py ./
+COPY csi_camera_capture.py ./
 
 # Copy model files
 COPY *.pt ./

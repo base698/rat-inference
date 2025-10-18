@@ -30,6 +30,13 @@ except ImportError:
     CV2_AVAILABLE = False
     print("OpenCV not available - camera features disabled")
 
+# Try importing CSI camera helper
+try:
+    from csi_camera_capture import CSICameraCapture
+    CSI_HELPER_AVAILABLE = True
+except ImportError:
+    CSI_HELPER_AVAILABLE = False
+
 # Try importing GPIO library
 try:
     import RPi.GPIO as GPIO
@@ -768,18 +775,30 @@ class CameraTracker:
         """Initialize camera (USB or CSI)"""
         try:
             if self.use_csi:
-                # Use GStreamer pipeline for Jetson CSI camera
-                pipeline = self.gstreamer_pipeline(
-                    sensor_id=self.camera_id,
-                    capture_width=1280,
-                    capture_height=720,
-                    display_width=640,
-                    display_height=480,
-                    framerate=VIDEO_FPS,
-                    flip_method=2  # 0=none, 2=rotate-180
-                )
-                self.camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                print(f"✓ CSI Camera initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS)")
+                # Use CSI camera helper (workaround for OpenCV without GStreamer)
+                if CSI_HELPER_AVAILABLE:
+                    self.camera = CSICameraCapture(
+                        sensor_id=self.camera_id,
+                        width=640,
+                        height=480,
+                        fps=VIDEO_FPS,
+                        flip_method=2  # rotate 180
+                    )
+                    self.camera.start()
+                    print(f"✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS)")
+                else:
+                    # Fallback to cv2.VideoCapture with GStreamer
+                    pipeline = self.gstreamer_pipeline(
+                        sensor_id=self.camera_id,
+                        capture_width=1280,
+                        capture_height=720,
+                        display_width=640,
+                        display_height=480,
+                        framerate=VIDEO_FPS,
+                        flip_method=2  # 0=none, 2=rotate-180
+                    )
+                    self.camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+                    print(f"✓ CSI Camera initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS)")
             else:
                 # Use regular USB camera
                 self.camera = cv2.VideoCapture(self.camera_id)
