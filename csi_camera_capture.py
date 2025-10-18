@@ -24,32 +24,39 @@ class CSICameraCapture:
         """Start capturing frames"""
         # GStreamer pipeline that outputs raw BGR frames to stdout
         gst_cmd = [
-            'gst-launch-1.0',
+            'gst-launch-1.0', '-q',  # -q for quiet (less stderr noise)
             'nvarguscamerasrc', f'sensor-id={self.sensor_id}',
             '!', f'video/x-raw(memory:NVMM), width=1280, height=720, format=NV12, framerate={self.fps}/1',
             '!', 'nvvidconv', f'flip-method={self.flip_method}',
-            '!', f'video/x-raw, width={self.width}, height={self.height}, format=BGR',
+            '!', f'video/x-raw, width={self.width}, height={self.height}, format=BGRx',
             '!', 'videoconvert',
             '!', 'video/x-raw, format=BGR',
-            '!', 'fdsink', 'fd=1'
+            '!', 'fdsink'
         ]
+
+        print(f"Starting GStreamer: {' '.join(gst_cmd)}")
 
         self.process = subprocess.Popen(
             gst_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=self.width * self.height * 3
+            stderr=subprocess.PIPE,
+            bufsize=self.width * self.height * 3 * 10  # Bigger buffer
         )
 
         self.running = True
         self.thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.thread.start()
 
+        # Give it a moment to start
+        import time
+        time.sleep(1)
+
         return True
 
     def _capture_loop(self):
         """Background thread that reads frames from gstreamer"""
         frame_size = self.width * self.height * 3  # BGR = 3 bytes per pixel
+        frame_count = 0
 
         while self.running:
             try:
@@ -57,6 +64,11 @@ class CSICameraCapture:
                 raw_frame = self.process.stdout.read(frame_size)
 
                 if len(raw_frame) != frame_size:
+                    print(f"Expected {frame_size} bytes, got {len(raw_frame)}")
+                    # Check if process died
+                    if self.process.poll() is not None:
+                        stderr = self.process.stderr.read().decode('utf-8', errors='ignore')
+                        print(f"GStreamer process died. stderr: {stderr}")
                     break
 
                 # Convert to numpy array
@@ -72,8 +84,14 @@ class CSICameraCapture:
 
                 self.frame_queue.put(frame)
 
+                frame_count += 1
+                if frame_count == 1:
+                    print(f"First frame captured successfully! ({self.width}x{self.height})")
+
             except Exception as e:
                 print(f"Capture error: {e}")
+                import traceback
+                traceback.print_exc()
                 break
 
     def read(self):
