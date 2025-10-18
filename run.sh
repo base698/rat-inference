@@ -12,6 +12,7 @@ usage() {
     echo "Commands:"
     echo "  build      - Build the Docker image"
     echo "  rt200      - Run rt_200.py server (default, with web UI on port 8000)"
+    echo "               Add --no-csi to use USB camera mode instead of CSI"
     echo "  inference  - Run inference.py for testing"
     echo "  shell      - Open a bash shell in the container"
     echo ""
@@ -38,6 +39,7 @@ run_rt200() {
         --ipc=host \
         --runtime=nvidia \
         --network=host \
+        -e DISPLAY=$DISPLAY \
         -v /tmp/argus_socket:/tmp/argus_socket \
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
@@ -45,9 +47,9 @@ run_rt200() {
         $IMAGE_NAME \
         python3 rt_200.py \
             --enable-camera \
-            --use-csi \
             --no-connect \
             --model runs/yolo11n-2025-08-24/weights/best.pt \
+            --use-csi \
             "$@"
 }
 
