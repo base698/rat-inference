@@ -791,7 +791,7 @@ class CameraTracker:
 
         print("Triggering action servo...")
         self.set_trigger_angle(TRIGGER_ACTION_ANGLE)  # Move to trigger position (30°)
-        time.sleep(3)  # Hold for 3 seconds
+        time.sleep(1)  # Hold for 1 second
         self.set_trigger_angle(TRIGGER_NEUTRAL_ANGLE)  # Return to neutral (70°)
         print("Trigger complete")
 
