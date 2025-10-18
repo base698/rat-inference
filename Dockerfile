@@ -1,4 +1,4 @@
-FROM ultralytics/ultralytics:latest-jetson-jetpack
+FROM ultralytics/ultralytics:latest-jetson-jetpack6
 
 # Set working directory
 WORKDIR /app
