@@ -27,8 +27,9 @@ import signal
 import atexit
 
 # Configuration
-SERVO_PIN = 33  # Pin 33 = GPIO13/PWM1 (or use Pin 32 for PWM0)
-PWM_FREQ = 50   # Standard servo frequency (50Hz = 20ms period)
+# Using BCM mode: GPIO13 (physical Pin 33 on the header)
+SERVO_PIN = 13   # GPIO13 (PWM1) - physical Pin 33
+PWM_FREQ = 50    # Standard servo frequency (50Hz = 20ms period)
 
 # Global PWM object for cleanup
 pwm_global = None
@@ -55,14 +56,14 @@ def setup_servo():
     """Initialize GPIO and PWM for servo control"""
     global pwm_global
 
-    # Configure Pin 33 as output in pinmux (temporary until reboot)
-    # This is required for Jetson Orin to use Pin 33 for PWM output
+    # Configure GPIO13 (Pin 33) as output in pinmux (temporary until reboot)
+    # This is required for Jetson Orin to use GPIO13 for PWM output
     import subprocess
     try:
-        print("Configuring Pin 33 as output in pinmux...")
+        print("Configuring GPIO13 (Pin 33) as output in pinmux...")
         subprocess.run(['busybox', 'devmem', '0x2434040', 'w', '0x4'],
                       check=True, capture_output=True)
-        print("✓ Pin configured successfully")
+        print("✓ GPIO13 configured successfully")
     except subprocess.CalledProcessError as e:
         print(f"Warning: Could not configure pin (may need sudo): {e}")
         print("  Run this on the host if servos don't work:")
@@ -70,7 +71,7 @@ def setup_servo():
     except FileNotFoundError:
         print("Warning: busybox not found, pin may not be configured correctly")
 
-    GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering for Jetson
+    GPIO.setmode(GPIO.BCM)  # Use BCM GPIO numbering for Jetson
     GPIO.setup(SERVO_PIN, GPIO.OUT)
     
     # Create PWM instance
@@ -200,8 +201,8 @@ def main():
     signal.signal(signal.SIGTERM, cleanup)
 
     print("Jetson Orin Servo Test")
-    print(f"Using Board Pin {SERVO_PIN} (adjust SERVO_PIN in script if needed)")
-    print("Common PWM pins: Pin 32 (PWM0), Pin 33 (PWM1)")
+    print(f"Using GPIO{SERVO_PIN} (BCM mode) - Physical Pin 33")
+    print("Common PWM pins: GPIO12 (Pin 32), GPIO13 (Pin 33)")
     print("Current calibration: 5.0% = 0°, 7.5% = 90°, 10.0% = 180°\n")
     
     try:
