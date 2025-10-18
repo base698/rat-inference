@@ -18,7 +18,8 @@ usage() {
     echo "Examples:"
     echo "  $0 build"
     echo "  $0 rt200"
-    echo "  $0 inference --input /app/data/test.jpg --save"
+    echo "  $0 inference --input ./test.jpg --save"
+    echo "  $0 inference --input bus.jpg --show"
     exit 1
 }
 
@@ -52,6 +53,34 @@ run_rt200() {
 # Run inference.py
 run_inference() {
     echo "Running inference.py..."
+
+    # Convert local file paths to container paths
+    ARGS=()
+    for arg in "$@"; do
+        if [[ "$arg" == --input=* ]]; then
+            # Handle --input=file.jpg format
+            path="${arg#--input=}"
+            path="${path#./}"  # Remove leading ./
+            ARGS+=("--input=/app/data/$path")
+        elif [[ "$arg" == --output=* ]]; then
+            # Handle --output=file.jpg format
+            path="${arg#--output=}"
+            path="${path#./}"
+            ARGS+=("--output=/app/data/$path")
+        elif [[ "$arg" == "-i" ]] || [[ "$arg" == "--input" ]] || [[ "$arg" == "-o" ]] || [[ "$arg" == "--output" ]]; then
+            ARGS+=("$arg")
+            # Next arg will be processed specially
+            CONVERT_NEXT=true
+        elif [[ "$CONVERT_NEXT" == true ]]; then
+            # This is a path argument, convert it
+            path="${arg#./}"  # Remove leading ./
+            ARGS+=("/app/data/$path")
+            CONVERT_NEXT=false
+        else
+            ARGS+=("$arg")
+        fi
+    done
+
     docker run -it --rm \
         --ipc=host \
         --runtime=nvidia \
@@ -59,7 +88,7 @@ run_inference() {
         $IMAGE_NAME \
         python3 inference.py \
             --model runs/yolo11n-2025-08-24/weights/best.pt \
-            "$@"
+            "${ARGS[@]}"
 }
 
 # Open a shell in the container

@@ -20,9 +20,9 @@ COPY runs ./runs
 RUN python3 -m pip install --upgrade pip && \
     pip install "setuptools<75.0.0" && \
     pip install \
+        "numpy<2" \
         pillow>=10.0.0 \
         ultralytics>=8.3.179 \
-        numpy \
         opencv-python \
         supervision \
         fastapi>=0.110.3 \
