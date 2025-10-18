@@ -3,19 +3,7 @@ FROM ultralytics/ultralytics:latest-jetson-jetpack6
 # Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY pyproject.toml ./
-COPY inference.py ./
-COPY rt_200.py ./
-COPY test_camera.py ./
-
-# Copy model files
-COPY *.pt ./
-
-# Copy runs directory with trained models
-COPY runs ./runs
-
-# Install Python dependencies
+# Install Python dependencies first (so Docker caches this layer)
 # Note: Only installing packages that are actually used by the code
 # Excluded: lerobot, feetech-servo-sdk (servo control), inference, ncnn, onnx (not imported)
 RUN python3 -m pip install --upgrade pip && \
@@ -28,6 +16,18 @@ RUN python3 -m pip install --upgrade pip && \
         supervision \
         fastapi>=0.110.3 \
         uvicorn
+
+# Copy project files (after pip install so code changes don't invalidate pip cache)
+COPY pyproject.toml ./
+COPY inference.py ./
+COPY rt_200.py ./
+COPY test_camera.py ./
+
+# Copy model files
+COPY *.pt ./
+
+# Copy runs directory with trained models
+COPY runs ./runs
 
 # Create detections directory for rt_200.py
 RUN mkdir -p detections
