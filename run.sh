@@ -18,7 +18,7 @@ usage() {
     echo "Examples:"
     echo "  $0 build"
     echo "  $0 rt200"
-    echo "  $0 inference --input test.jpg --model yolo11n.pt --save"
+    echo "  $0 inference --input /app/data/test.jpg --save"
     exit 1
 }
 
@@ -41,7 +41,12 @@ run_rt200() {
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
         $IMAGE_NAME \
-        python3 rt_200.py --enable-camera --use-csi --no-connect "$@"
+        python3 rt_200.py \
+            --enable-camera \
+            --use-csi \
+            --no-connect \
+            --model runs/yolo11n-2025-08-24/weights/best.pt \
+            "$@"
 }
 
 # Run inference.py
@@ -52,7 +57,9 @@ run_inference() {
         --runtime=nvidia \
         -v $(pwd):/app/data \
         $IMAGE_NAME \
-        python3 inference.py "$@"
+        python3 inference.py \
+            --model runs/yolo11n-2025-08-24/weights/best.pt \
+            "$@"
 }
 
 # Open a shell in the container
