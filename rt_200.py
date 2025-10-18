@@ -783,6 +783,9 @@ class CameraTracker:
             else:
                 # Use regular USB camera
                 self.camera = cv2.VideoCapture(self.camera_id)
+
+                # Set format to MJPEG if available (better compatibility)
+                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 self.camera.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
