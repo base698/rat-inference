@@ -3,14 +3,14 @@ FROM ultralytics/ultralytics:latest-jetson-jetpack6
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including GPIO support
-RUN apt-get update && apt-get install -y \
-    vim \
-    python3-jetson-gpio \
-    && rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update && apt-get install -y vim && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
+# Install Jetson.GPIO with older setuptools to avoid compatibility issues
 RUN python3 -m pip install --upgrade pip && \
+    pip install "setuptools==69.5.1" && \
+    pip install Jetson.GPIO && \
     pip install "setuptools<75.0.0" && \
     pip install \
         "numpy<2" \
