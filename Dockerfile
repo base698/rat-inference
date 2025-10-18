@@ -27,6 +27,7 @@ COPY rt_200.py ./
 COPY test_camera.py ./
 COPY csi_camera_capture.py ./
 COPY servo_test.py ./
+COPY servo_test_sysfs.py ./
 
 # Copy model files
 COPY *.pt ./
