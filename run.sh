@@ -38,8 +38,10 @@ run_rt200() {
         --ipc=host \
         --runtime=nvidia \
         --network=host \
+        -v /tmp/argus_socket:/tmp/argus_socket \
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
+        --group-add video \
         $IMAGE_NAME \
         python3 rt_200.py \
             --enable-camera \
