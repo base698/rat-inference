@@ -27,8 +27,8 @@ import signal
 import atexit
 
 # Configuration
-# Using BCM mode: GPIO13 (physical Pin 33 on the header)
-SERVO_PIN = 13   # GPIO13 (PWM1) - physical Pin 33
+# Using BCM mode: GPIO12 (physical Pin 32 on the header)
+SERVO_PIN = 12   # GPIO12 (PWM0) - physical Pin 32
 PWM_FREQ = 50    # Standard servo frequency (50Hz = 20ms period)
 
 # Global PWM object for cleanup
