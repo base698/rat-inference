@@ -15,6 +15,8 @@ COPY *.pt ./
 COPY runs ./runs
 
 # Install Python dependencies from pyproject.toml
+# Note: servo libraries (lerobot, feetech-servo-sdk) are excluded due to compatibility issues
+# The code handles their absence gracefully with --no-connect flag
 RUN python3 -m pip install --upgrade pip && \
     pip install \
         pillow>=10.0.0 \
@@ -25,8 +27,6 @@ RUN python3 -m pip install --upgrade pip && \
         supervision \
         fastapi>=0.110.3 \
         uvicorn \
-        "lerobot>=0.3.0" \
-        "feetech-servo-sdk>=1.0.0" \
         "ncnn>=1.0.20250916" \
         "onnx>=1.19.0"
 
