@@ -49,11 +49,12 @@ run_rt200() {
         -v /var/run:/var/run \
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
+        --device=/dev/ttyACM0:/dev/ttyACM0 \
         --group-add video \
         $IMAGE_NAME \
         python3 rt_200.py \
             --enable-camera \
-            --no-connect \
+            --port /dev/ttyACM0 \
             --model runs/yolo11n-2025-08-24/weights/best.pt \
             --use-csi \
             --camera-id 0 \
