@@ -7,21 +7,24 @@ IMAGE_NAME="rat-inference:latest"
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 [build|rt200|inference|shell]"
+    echo "Usage: $0 [build|rt200|inference|shell|servo-test]"
     echo ""
     echo "Commands:"
-    echo "  build      - Build the Docker image"
-    echo "  rt200      - Run rt_200.py server (default, with web UI on port 8000)"
-    echo "               Add --no-csi to use USB camera mode instead of CSI"
-    echo "  inference  - Run inference.py for testing"
-    echo "  test-cam   - Test camera and save test image"
-    echo "  shell      - Open a bash shell in the container"
+    echo "  build        - Build the Docker image"
+    echo "  rt200        - Run rt_200.py server (default, with web UI on port 8000)"
+    echo "                 Add --no-csi to use USB camera mode instead of CSI"
+    echo "  inference    - Run inference.py for testing"
+    echo "  test-cam     - Test camera and save test image"
+    echo "  servo-test   - Test GPIO servo control (pass angle or 'calibrate')"
+    echo "  shell        - Open a bash shell in the container"
     echo ""
     echo "Examples:"
     echo "  $0 build"
     echo "  $0 rt200"
     echo "  $0 inference --input ./test.jpg --save"
-    echo "  $0 inference --input bus.jpg --save --model yolov8n.pt --imgsz 320"
+    echo "  $0 servo-test 90          # Move servo to 90 degrees"
+    echo "  $0 servo-test calibrate   # Interactive calibration mode"
+    echo "  $0 servo-test             # Continuous sweep test"
     exit 1
 }
 
@@ -112,6 +115,21 @@ test_camera() {
         python3 test_camera.py
 }
 
+# Test servo
+test_servo() {
+    echo "Testing GPIO servo control..."
+    echo "Make sure servo is connected to Pin 33 (GPIO13/PWM1)"
+    docker run -it --rm \
+        --privileged \
+        --ipc=host \
+        --runtime=nvidia \
+        -v /sys:/sys \
+        -v /dev:/dev \
+        --group-add gpio \
+        $IMAGE_NAME \
+        python3 servo_test.py "$@"
+}
+
 # Open a shell in the container
 run_shell() {
     echo "Opening shell in container..."
@@ -142,6 +160,10 @@ case "${1:-rt200}" in
         ;;
     test-cam)
         test_camera
+        ;;
+    servo-test)
+        shift
+        test_servo "$@"
         ;;
     shell)
         run_shell

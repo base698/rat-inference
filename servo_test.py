@@ -1,17 +1,33 @@
 #!/usr/bin/env python3
 """
-Servo Test Script for Raspberry Pi
+Servo Test Script for Jetson Orin
 Tests servo at multiple angles or moves to a specific position
+
+Jetson Orin Nano 40-Pin Header PWM Pins (BOARD numbering):
+┌─────────────────────────────────────────┐
+│ Pin 32 - PWM0 (GPIO12/SOC_GPIO12)       │
+│ Pin 33 - PWM1 (GPIO13/SOC_GPIO13)       │
+└─────────────────────────────────────────┘
+
+Standard Servo Wiring:
+- Brown/Black = Ground (GND - any ground pin)
+- Red         = Power (5V - Pin 2 or 4, use external power for multiple servos)
+- Orange/White = Signal (PWM - Pin 32 or 33)
+
+Usage:
+  python3 servo_test.py              # Continuous sweep test (0°, 45°, 90°, 135°, 180°)
+  python3 servo_test.py 90           # Move to specific angle and hold
+  python3 servo_test.py calibrate    # Interactive calibration mode
 """
 
-import RPi.GPIO as GPIO
+import Jetson.GPIO as GPIO
 import time
 import sys
 import signal
 import atexit
 
 # Configuration
-SERVO_PIN = 14  
+SERVO_PIN = 33  # Pin 33 = GPIO13/PWM1 (or use Pin 32 for PWM0)
 PWM_FREQ = 50   # Standard servo frequency (50Hz = 20ms period)
 
 # Global PWM object for cleanup
@@ -38,8 +54,8 @@ def angle_to_duty_cycle(angle):
 def setup_servo():
     """Initialize GPIO and PWM for servo control"""
     global pwm_global
-    
-    GPIO.setmode(GPIO.BCM)
+
+    GPIO.setmode(GPIO.BOARD)  # Use physical pin numbering for Jetson
     GPIO.setup(SERVO_PIN, GPIO.OUT)
     
     # Create PWM instance
@@ -162,14 +178,15 @@ def calibration_mode(pwm):
 
 def main():
     global pwm_global
-    
+
     # Set up cleanup handlers
     atexit.register(cleanup)
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
-    
-    print("Raspberry Pi Servo Test")
-    print(f"Using GPIO{SERVO_PIN} (adjust SERVO_PIN in script if needed)")
+
+    print("Jetson Orin Servo Test")
+    print(f"Using Board Pin {SERVO_PIN} (adjust SERVO_PIN in script if needed)")
+    print("Common PWM pins: Pin 32 (PWM0), Pin 33 (PWM1)")
     print("Current calibration: 5.0% = 0°, 7.5% = 90°, 10.0% = 180°\n")
     
     try:

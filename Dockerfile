@@ -15,7 +15,8 @@ RUN python3 -m pip install --upgrade pip && \
         opencv-python \
         supervision \
         fastapi>=0.110.3 \
-        uvicorn
+        uvicorn \
+        Jetson.GPIO
 
 RUN apt update
 RUN apt install -y vim
@@ -25,6 +26,7 @@ COPY inference.py ./
 COPY rt_200.py ./
 COPY test_camera.py ./
 COPY csi_camera_capture.py ./
+COPY servo_test.py ./
 
 # Copy model files
 COPY *.pt ./
