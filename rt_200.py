@@ -129,6 +129,9 @@ async def root():
                 max-width: 100%;
                 height: auto;
                 border-radius: 10px;
+                display: block;
+                position: absolute;
+                margin-top: -62px;
             }}
             .status {{
                 padding: 10px;
