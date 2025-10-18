@@ -1063,6 +1063,10 @@ class CameraTracker:
             if not self.use_csi:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
 
+            # Resize to 640x480 if needed (camera may not respect resolution settings)
+            if frame.shape[1] != 640 or frame.shape[0] != 480:
+                frame = cv2.resize(frame, (640, 480))
+
             # Draw overlays
             frame = self.draw_overlays(frame)
 
@@ -1095,6 +1099,10 @@ class CameraTracker:
             # Rotate 180 degrees if not using CSI with flip_method
             if not self.use_csi:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
+
+            # Resize to 640x480 if needed (camera may not respect resolution settings)
+            if frame.shape[1] != 640 or frame.shape[0] != 480:
+                frame = cv2.resize(frame, (640, 480))
 
             # Save temporary file for inference
             temp_path = "temp_inference.jpg"
