@@ -8,11 +8,11 @@ COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
 
-# Copy model files if they exist
+# Copy model files
 COPY *.pt ./
 
-# Copy any runs directory with trained models
-COPY runs/ ./runs/ 2>/dev/null || true
+# Copy runs directory with trained models
+COPY runs ./runs
 
 # Install Python dependencies from pyproject.toml
 # Extract dependencies and install them
