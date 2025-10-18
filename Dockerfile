@@ -15,11 +15,20 @@ COPY *.pt ./
 COPY runs ./runs
 
 # Install Python dependencies from pyproject.toml
-# Extract dependencies and install them
 RUN python3 -m pip install --upgrade pip && \
-    python3 -c "import tomllib; deps = tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']; print('\n'.join(deps))" > /tmp/requirements.txt && \
-    pip install -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+    pip install \
+        pillow>=10.0.0 \
+        ultralytics>=8.3.179 \
+        numpy \
+        opencv-python \
+        "inference>=0.35.0,<0.51" \
+        supervision \
+        fastapi>=0.110.3 \
+        uvicorn \
+        "lerobot>=0.3.0" \
+        "feetech-servo-sdk>=1.0.0" \
+        "ncnn>=1.0.20250916" \
+        "onnx>=1.19.0"
 
 # Create detections directory for rt_200.py
 RUN mkdir -p detections
