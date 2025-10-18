@@ -71,8 +71,8 @@ class CSICameraCapture:
                         print(f"GStreamer process died. stderr: {stderr}")
                     break
 
-                # Convert to numpy array
-                frame = np.frombuffer(raw_frame, dtype=np.uint8)
+                # Convert to numpy array (make writable copy for OpenCV)
+                frame = np.frombuffer(raw_frame, dtype=np.uint8).copy()
                 frame = frame.reshape((self.height, self.width, 3))
 
                 # Put in queue (drop oldest if full)
