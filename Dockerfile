@@ -18,7 +18,7 @@ RUN python3 -m pip install --upgrade pip && \
         uvicorn
 
 RUN apt update
-RUN install vim
+RUN apt install -y vim
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY pyproject.toml ./
 COPY inference.py ./
