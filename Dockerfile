@@ -19,7 +19,8 @@ RUN python3 -m pip install --upgrade pip && \
         opencv-python \
         supervision \
         fastapi>=0.110.3 \
-        uvicorn
+        uvicorn \
+        lerobot
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY pyproject.toml ./
 COPY inference.py ./
