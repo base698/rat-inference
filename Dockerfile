@@ -28,6 +28,7 @@ COPY test_camera.py ./
 COPY csi_camera_capture.py ./
 COPY servo_test.py ./
 COPY servo_test_sysfs.py ./
+COPY find_pwm.py ./
 
 # Copy model files
 COPY *.pt ./
