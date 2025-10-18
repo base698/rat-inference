@@ -50,7 +50,7 @@ run_rt200() {
             --enable-camera \
             --no-connect \
             --model runs/yolo11n-2025-08-24/weights/best.pt \
-            --use-csi \
+            --camera-id 0 \
             "$@"
 }
 
