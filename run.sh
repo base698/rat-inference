@@ -124,8 +124,6 @@ test_servo() {
         --ipc=host \
         --runtime=nvidia \
         -v /sys:/sys \
-        -v /dev:/dev \
-        --group-add gpio \
         $IMAGE_NAME \
         python3 servo_test.py "$@"
 }
