@@ -75,8 +75,12 @@ PITCH_MIN = 0    # Minimum pitch position (level, raw)
 PITCH_MAX = 600  # Maximum pitch position (~55 degrees down, raw)
 PITCH_CENTER = 0 # Start at level position
 
-# GPIO servo configuration (trigger servo)
-TRIGGER_SERVO_PIN = 14  # GPIO14 for trigger servo
+# PWM servo configuration (trigger servo)
+# Using sysfs hardware PWM - Pin 15 (GPIO12) = PWM Chip 0
+TRIGGER_PWM_CHIP = 0  # PWM chip 0 (confirmed working)
+TRIGGER_PWM_CHANNEL = 0
+TRIGGER_NEUTRAL_ANGLE = 70  # Neutral position in degrees
+TRIGGER_ACTION_ANGLE = 30   # Trigger position in degrees
 
 # Tracking configuration
 TARGET_CROSSHAIR_X = 320  # Center X position for target (640/2)
@@ -660,9 +664,9 @@ class CameraTracker:
         self.frame_lock = threading.Lock()
         self.inference_lock = threading.Lock()
 
-        # Trigger servo
-        self.trigger_servo_enabled = enable_trigger and GPIO_AVAILABLE
-        self.trigger_servo = None
+        # Trigger servo (uses sysfs PWM, doesn't need GPIO library)
+        self.trigger_servo_enabled = enable_trigger
+        self.trigger_pwm_path = None
 
         # Current positions for tracking servos
         self.current_yaw = YAW_CENTER
@@ -721,31 +725,63 @@ class CameraTracker:
                 self.start_inference_thread()
 
     def init_trigger_servo(self):
-        """Initialize GPIO trigger servo"""
+        """Initialize PWM trigger servo using sysfs"""
         try:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(TRIGGER_SERVO_PIN, GPIO.OUT)
-            self.trigger_servo = GPIO.PWM(TRIGGER_SERVO_PIN, 50)  # 50Hz PWM
-            self.trigger_servo.start(0)
-            self.set_trigger_angle(25)  # Neutral position
-            print(f"✓ Trigger servo initialized on GPIO{TRIGGER_SERVO_PIN}")
+            pwm_path = f"/sys/class/pwm/pwmchip{TRIGGER_PWM_CHIP}/pwm{TRIGGER_PWM_CHANNEL}"
+            export_path = f"/sys/class/pwm/pwmchip{TRIGGER_PWM_CHIP}/export"
+
+            # Export PWM channel if not already exported
+            if not os.path.exists(pwm_path):
+                with open(export_path, 'w') as f:
+                    f.write(str(TRIGGER_PWM_CHANNEL))
+                time.sleep(0.2)
+
+            # Store PWM path
+            self.trigger_pwm_path = pwm_path
+
+            # Set period (20ms = 50Hz)
+            with open(f"{pwm_path}/period", 'w') as f:
+                f.write('20000000')  # 20ms in nanoseconds
+
+            # Enable PWM
+            with open(f"{pwm_path}/enable", 'w') as f:
+                f.write('1')
+
+            # Set to neutral position
+            self.set_trigger_angle(TRIGGER_NEUTRAL_ANGLE)
+
+            print(f"✓ Trigger servo initialized on PWM chip {TRIGGER_PWM_CHIP} (Pin 15, GPIO12)")
+            print(f"  Neutral: {TRIGGER_NEUTRAL_ANGLE}°, Trigger: {TRIGGER_ACTION_ANGLE}°")
         except Exception as e:
             print(f"Failed to initialize trigger servo: {e}")
             self.trigger_servo_enabled = False
+            self.trigger_pwm_path = None
 
     def set_trigger_angle(self, angle):
-        """Set trigger servo angle (0-180 degrees)"""
-        if not self.trigger_servo_enabled or not self.trigger_servo:
+        """Set trigger servo angle (0-180 degrees) using sysfs PWM"""
+        if not self.trigger_servo_enabled or not hasattr(self, 'trigger_pwm_path') or not self.trigger_pwm_path:
             return
 
-        # Convert angle to duty cycle
-        min_duty = 5.0   # Duty cycle for 0 degrees
-        max_duty = 10.0  # Duty cycle for 180 degrees
-        duty_cycle = min_duty + (angle / 180.0) * (max_duty - min_duty)
+        try:
+            # Clamp angle
+            angle = max(0, min(180, angle))
 
-        self.trigger_servo.ChangeDutyCycle(duty_cycle)
-        time.sleep(0.5)
-        self.trigger_servo.ChangeDutyCycle(0)
+            # Convert angle to pulse width (nanoseconds)
+            # MG996R: 0.5ms (500000ns) = 0°, 2.5ms (2500000ns) = 180°
+            min_pulse = 500000
+            max_pulse = 2500000
+            pulse_width = int(min_pulse + (angle / 180.0) * (max_pulse - min_pulse))
+
+            # Set duty cycle
+            with open(f"{self.trigger_pwm_path}/duty_cycle", 'w') as f:
+                f.write(str(pulse_width))
+
+            # Ensure it's enabled
+            with open(f"{self.trigger_pwm_path}/enable", 'w') as f:
+                f.write('1')
+
+        except Exception as e:
+            print(f"Error setting trigger angle: {e}")
 
     def trigger_action_servo(self):
         """Trigger the action servo"""
@@ -754,9 +790,9 @@ class CameraTracker:
             return
 
         print("Triggering action servo...")
-        self.set_trigger_angle(90)  # Move to trigger position
+        self.set_trigger_angle(TRIGGER_ACTION_ANGLE)  # Move to trigger position (30°)
         time.sleep(3)  # Hold for 3 seconds
-        self.set_trigger_angle(25)  # Return to neutral
+        self.set_trigger_angle(TRIGGER_NEUTRAL_ANGLE)  # Return to neutral (70°)
         print("Trigger complete")
 
     def gstreamer_pipeline(self, sensor_id=0, capture_width=1280, capture_height=720,
@@ -1245,12 +1281,16 @@ class CameraTracker:
             except:
                 pass
 
-        # Cleanup GPIO
-        if self.trigger_servo_enabled and GPIO_AVAILABLE:
+        # Cleanup PWM trigger servo
+        if self.trigger_servo_enabled and hasattr(self, 'trigger_pwm_path') and self.trigger_pwm_path:
             try:
-                if self.trigger_servo:
-                    self.trigger_servo.stop()
-                GPIO.cleanup()
+                # Disable PWM
+                with open(f"{self.trigger_pwm_path}/enable", 'w') as f:
+                    f.write('0')
+                # Unexport PWM
+                unexport_path = f"/sys/class/pwm/pwmchip{TRIGGER_PWM_CHIP}/unexport"
+                with open(unexport_path, 'w') as f:
+                    f.write(str(TRIGGER_PWM_CHANNEL))
             except:
                 pass
 
