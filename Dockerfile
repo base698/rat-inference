@@ -6,6 +6,15 @@ WORKDIR /app
 # Install Python dependencies first (so Docker caches this layer)
 # Note: Only installing packages that are actually used by the code
 # Excluded: lerobot, feetech-servo-sdk (servo control), inference, ncnn, onnx (not imported)
+
+# Install Jetson.GPIO from GitHub (PyPI version has setuptools compatibility issues)
+RUN apt-get update && apt-get install -y git && \
+    git clone https://github.com/NVIDIA/jetson-gpio.git /tmp/jetson-gpio && \
+    cd /tmp/jetson-gpio && \
+    python3 setup.py install && \
+    cd / && rm -rf /tmp/jetson-gpio
+
+# Install other Python dependencies
 RUN python3 -m pip install --upgrade pip && \
     pip install "setuptools<75.0.0" && \
     pip install \
@@ -15,8 +24,7 @@ RUN python3 -m pip install --upgrade pip && \
         opencv-python \
         supervision \
         fastapi>=0.110.3 \
-        uvicorn \
-        Jetson.GPIO
+        uvicorn
 
 RUN apt update
 RUN apt install -y vim
