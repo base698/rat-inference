@@ -19,7 +19,7 @@ usage() {
     echo "  $0 build"
     echo "  $0 rt200"
     echo "  $0 inference --input ./test.jpg --save"
-    echo "  $0 inference --input bus.jpg --show"
+    echo "  $0 inference --input bus.jpg --save --model yolov8n.pt --imgsz 320"
     exit 1
 }
 
@@ -34,11 +34,10 @@ run_rt200() {
     echo "Starting rt_200.py server..."
     echo "Web interface will be available at http://localhost:8000"
     docker run -it --rm \
+        --privileged \
         --ipc=host \
         --runtime=nvidia \
         --network=host \
-        --device /dev/video0 \
-        --device /dev/i2c-1 \
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
         $IMAGE_NAME \
