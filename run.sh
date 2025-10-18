@@ -40,8 +40,10 @@ run_rt200() {
         --ipc=host \
         --runtime=nvidia \
         --network=host \
+        --pid=host \
         -e DISPLAY=$DISPLAY \
-        -v /tmp/argus_socket:/tmp/argus_socket \
+        -v /tmp:/tmp \
+        -v /var/run:/var/run \
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
         --group-add video \
