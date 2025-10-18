@@ -21,6 +21,9 @@ RUN python3 -m pip install --upgrade pip && \
         fastapi>=0.110.3 \
         uvicorn \
         lerobot
+
+# Install Feetech servo SDK separately (to avoid reinstalling lerobot on changes)
+RUN pip install feetech-servo-sdk
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY pyproject.toml ./
 COPY inference.py ./
