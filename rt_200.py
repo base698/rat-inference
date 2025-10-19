@@ -87,7 +87,7 @@ TARGET_CROSSHAIR_X = 320  # Center X position for target (640/2)
 TARGET_CROSSHAIR_Y = 240  # Center Y position for target (480/2)
 CROSSHAIR_SIZE = 20       # Size of crosshair in pixels
 VIDEO_FPS = 30            # Video display frame rate
-INFERENCE_FPS = 15        # Inference frame rate
+INFERENCE_FPS = 7         # Inference frame rate
 
 @app.get("/")
 async def root():
