@@ -410,17 +410,8 @@ async def root():
                     document.getElementById('detectionCount').textContent =
                         'Total Detections: ' + (status.detection_count || 0);
 
-                    // Update slider positions to match actual motor positions
-                    if (status.connected && typeof status.yaw_position === 'number') {{
-                        yawValue = status.yaw_position;
-                        document.getElementById('yawSlider').value = yawValue;
-                        document.getElementById('yawValue').textContent = yawValue;
-                    }}
-                    if (status.connected && typeof status.pitch_position === 'number') {{
-                        pitchValue = status.pitch_position;
-                        document.getElementById('pitchSlider').value = pitchValue;
-                        document.getElementById('pitchValue').textContent = pitchValue;
-                    }}
+                    // Don't update sliders from status - let user control them directly
+                    // Status text shows the tracked position, sliders show commanded position
                 }} catch (error) {{
                     console.error('Error getting status:', error);
                 }}
