@@ -73,7 +73,7 @@ YAW_MAX = 3500  # Maximum yaw position (raw)
 YAW_CENTER = (YAW_MIN + YAW_MAX) // 2  # Center position for yaw
 PITCH_MIN = 0    # Minimum pitch position (level, raw)
 PITCH_MAX = 600  # Maximum pitch position (~55 degrees down, raw)
-PITCH_CENTER = 0 # Start at level position
+PITCH_CENTER = 300 # Start at level position
 
 # PWM servo configuration (trigger servo)
 # Using sysfs hardware PWM - Pin 15 (GPIO12) = PWM Chip 0
@@ -564,12 +564,8 @@ async def get_status():
             "detection_count": 0
         })
 
-    # Read actual motor positions if connected
-    if tracker_instance.connected:
-        actual_yaw, actual_pitch = tracker_instance.read_motor_positions()
-        tracker_instance.current_yaw = actual_yaw
-        tracker_instance.current_pitch = actual_pitch
-
+    # Don't read positions on every status call - too frequent and causes bus errors
+    # Positions are read once on connection and updated when we write to motors
     return JSONResponse({
         "connected": tracker_instance.connected,
         "yaw_position": tracker_instance.current_yaw,

@@ -7,7 +7,7 @@ IMAGE_NAME="rat-inference:latest"
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 [build|rt200|inference|shell|servo-test|servo-test-hw]"
+    echo "Usage: $0 [build|rt200|inference|shell|servo-test|servo-test-hw|pitch-test]"
     echo ""
     echo "Commands:"
     echo "  build          - Build the Docker image"
@@ -16,6 +16,7 @@ usage() {
     echo "  test-cam       - Test camera and save test image"
     echo "  servo-test     - Test GPIO servo (Jetson.GPIO library)"
     echo "  servo-test-hw  - Test servo using hardware PWM (sysfs) - recommended"
+    echo "  pitch-test     - Test pitch motor (read/write position)"
     echo "  shell          - Open a bash shell in the container"
     echo ""
     echo "Examples:"
@@ -25,6 +26,8 @@ usage() {
     echo "  $0 servo-test-hw 90       # Move servo to 90 degrees (hardware PWM)"
     echo "  $0 servo-test-hw          # Continuous sweep test (hardware PWM)"
     echo "  $0 servo-test calibrate   # Interactive calibration (Jetson.GPIO)"
+    echo "  $0 pitch-test             # Read current pitch position"
+    echo "  $0 pitch-test 300         # Write pitch position to 300"
     exit 1
 }
 
@@ -142,6 +145,18 @@ test_servo_hw() {
         python3 servo_test_sysfs.py "$@"
 }
 
+# Test pitch motor (Feetech)
+test_pitch() {
+    echo "Testing pitch motor (Feetech STS3215)..."
+    docker run -it --rm \
+        --privileged \
+        --ipc=host \
+        --runtime=nvidia \
+        --device=/dev/ttyACM0:/dev/ttyACM0 \
+        $IMAGE_NAME \
+        python3 pitch_test.py "$@"
+}
+
 # Open a shell in the container
 run_shell() {
     echo "Opening shell in container..."
@@ -180,6 +195,10 @@ case "${1:-rt200}" in
     servo-test-hw)
         shift
         test_servo_hw "$@"
+        ;;
+    pitch-test)
+        shift
+        test_pitch "$@"
         ;;
     shell)
         run_shell
