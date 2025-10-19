@@ -638,7 +638,7 @@ class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
-                 use_csi=False):
+                 use_csi=False, invert_camera=True):
         """
         Initialize the camera tracker
 
@@ -652,6 +652,7 @@ class CameraTracker:
             confidence_threshold: Detection confidence threshold
             camera_id: Camera device ID (0 for USB, varies for CSI)
             use_csi: Use CSI camera with GStreamer pipeline (Jetson)
+            invert_camera: Invert camera 180 degrees (for upside-down mounting)
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -665,6 +666,7 @@ class CameraTracker:
         self.camera = None
         self.camera_id = camera_id
         self.use_csi = use_csi
+        self.invert_camera = invert_camera
         self.model = None
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
@@ -827,6 +829,9 @@ class CameraTracker:
         """Initialize camera (USB or CSI)"""
         try:
             if self.use_csi:
+                # Determine flip method based on invert_camera flag
+                flip_method = 2 if self.invert_camera else 0  # 2=rotate-180, 0=none
+
                 # Use CSI camera helper (workaround for OpenCV without GStreamer)
                 if CSI_HELPER_AVAILABLE:
                     self.camera = CSICameraCapture(
@@ -834,10 +839,11 @@ class CameraTracker:
                         width=640,
                         height=480,
                         fps=VIDEO_FPS,
-                        flip_method=2  # rotate 180
+                        flip_method=flip_method
                     )
                     self.camera.start()
-                    print(f"✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS)")
+                    flip_status = "inverted" if self.invert_camera else "normal"
+                    print(f"✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
                 else:
                     # Fallback to cv2.VideoCapture with GStreamer
                     pipeline = self.gstreamer_pipeline(
@@ -847,10 +853,11 @@ class CameraTracker:
                         display_width=640,
                         display_height=480,
                         framerate=VIDEO_FPS,
-                        flip_method=2  # 0=none, 2=rotate-180
+                        flip_method=flip_method
                     )
                     self.camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                    print(f"✓ CSI Camera initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS)")
+                    flip_status = "inverted" if self.invert_camera else "normal"
+                    print(f"✓ CSI Camera initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
             else:
                 # Use regular USB camera
                 self.camera = cv2.VideoCapture(self.camera_id)
@@ -860,7 +867,8 @@ class CameraTracker:
                 self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 self.camera.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
-                print(f"✓ USB Camera {self.camera_id} initialized (640x480 @ {VIDEO_FPS} FPS)")
+                flip_status = "inverted" if self.invert_camera else "normal"
+                print(f"✓ USB Camera {self.camera_id} initialized (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
 
             if not self.camera.isOpened():
                 raise Exception("Failed to open camera")
@@ -1149,8 +1157,9 @@ class CameraTracker:
             if not ret:
                 return
 
-            # Rotate 180 degrees if not using CSI with flip_method
-            if not self.use_csi:
+            # Rotate 180 degrees if invert_camera is enabled and not using CSI with flip_method
+            # (CSI camera handles rotation in GStreamer pipeline)
+            if self.invert_camera and not self.use_csi:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
 
             # Resize to 640x480 if needed (camera may not respect resolution settings)
@@ -1186,8 +1195,9 @@ class CameraTracker:
             if not ret:
                 return
 
-            # Rotate 180 degrees if not using CSI with flip_method
-            if not self.use_csi:
+            # Rotate 180 degrees if invert_camera is enabled and not using CSI with flip_method
+            # (CSI camera handles rotation in GStreamer pipeline)
+            if self.invert_camera and not self.use_csi:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
 
             # Resize to 640x480 if needed (camera may not respect resolution settings)
@@ -1356,6 +1366,8 @@ def main():
                        help="Camera device ID (default: 0)")
     parser.add_argument("--use-csi", action="store_true",
                        help="Use CSI camera with GStreamer pipeline (Jetson)")
+    parser.add_argument("--no-invert-camera", action="store_true",
+                       help="Don't invert camera (default: camera is inverted for upside-down mounting)")
     parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-08-24/weights/best.pt",
                        help="Path to YOLO model")
     parser.add_argument("--confidence", "-c", type=float, default=0.85,
@@ -1384,7 +1396,8 @@ def main():
         model_path=args.model if args.enable_camera else None,
         confidence_threshold=args.confidence,
         camera_id=args.camera_id,
-        use_csi=args.use_csi
+        use_csi=args.use_csi,
+        invert_camera=not args.no_invert_camera  # Default is inverted
     )
     tracker_instance = tracker
 
@@ -1396,7 +1409,8 @@ def main():
     print(f"Camera: {'ENABLED' if args.enable_camera else 'DISABLED'}")
     if args.enable_camera:
         camera_type = "CSI (GStreamer)" if args.use_csi else "USB"
-        print(f"Camera type: {camera_type} (ID: {args.camera_id})")
+        invert_status = "inverted (upside-down)" if not args.no_invert_camera else "normal"
+        print(f"Camera type: {camera_type} (ID: {args.camera_id}, {invert_status})")
     print(f"Detection: {'ENABLED' if (args.enable_camera and args.model) else 'DISABLED'}")
     if args.enable_camera and args.model:
         print(f"Model: {args.model}")
