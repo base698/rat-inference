@@ -1259,9 +1259,9 @@ class CameraTracker:
                             self.set_yaw(desired_yaw)
                             self.set_pitch(desired_pitch)
 
-                            # Trigger servo if enabled and detection is new
-                            if detection and not self.latest_detection and self.trigger_servo_enabled:
-                                threading.Thread(target=self.trigger_action_servo, daemon=True).start()
+                            # Auto-trigger disabled - only trigger manually via button
+                            # if detection and not self.latest_detection and self.trigger_servo_enabled:
+                            #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
 
             # Update detection state
             with self.inference_lock:
