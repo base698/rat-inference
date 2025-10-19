@@ -94,6 +94,14 @@ async def root():
     """Root endpoint with control interface and camera view"""
     enable_trigger = tracker_instance and tracker_instance.trigger_servo_enabled
 
+    # Get actual motor positions if connected, otherwise use center values
+    if tracker_instance and tracker_instance.connected:
+        initial_yaw = tracker_instance.current_yaw
+        initial_pitch = tracker_instance.current_pitch
+    else:
+        initial_yaw = YAW_CENTER
+        initial_pitch = PITCH_CENTER
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -282,8 +290,8 @@ async def root():
             }}
         </style>
         <script>
-            let yawValue = {YAW_CENTER};
-            let pitchValue = {PITCH_CENTER};
+            let yawValue = {initial_yaw};  // Initialized from actual motor position
+            let pitchValue = {initial_pitch};  // Initialized from actual motor position
             let streamInterval = null;
 
             async function updatePosition(yaw = null, pitch = null) {{
@@ -401,6 +409,18 @@ async def root():
                         'Camera: ' + (status.camera_active ? 'Active' : 'Inactive');
                     document.getElementById('detectionCount').textContent =
                         'Total Detections: ' + (status.detection_count || 0);
+
+                    // Update slider positions to match actual motor positions
+                    if (status.connected && typeof status.yaw_position === 'number') {{
+                        yawValue = status.yaw_position;
+                        document.getElementById('yawSlider').value = yawValue;
+                        document.getElementById('yawValue').textContent = yawValue;
+                    }}
+                    if (status.connected && typeof status.pitch_position === 'number') {{
+                        pitchValue = status.pitch_position;
+                        document.getElementById('pitchSlider').value = pitchValue;
+                        document.getElementById('pitchValue').textContent = pitchValue;
+                    }}
                 }} catch (error) {{
                     console.error('Error getting status:', error);
                 }}
@@ -490,9 +510,9 @@ async def root():
                             <input type="range" id="yawSlider"
                                    min="{YAW_MIN}"
                                    max="{YAW_MAX}"
-                                   value="{YAW_CENTER}"
+                                   value="{initial_yaw}"
                                    oninput="updatePosition(this.value, null)">
-                            <span id="yawValue">{YAW_CENTER}</span>
+                            <span id="yawValue">{initial_yaw}</span>
                         </div>
 
                         <div class="control-group">
@@ -500,9 +520,9 @@ async def root():
                             <input type="range" id="pitchSlider"
                                    min="{PITCH_MIN}"
                                    max="{PITCH_MAX}"
-                                   value="{PITCH_CENTER}"
+                                   value="{initial_pitch}"
                                    oninput="updatePosition(null, this.value)">
-                            <span id="pitchValue">{PITCH_CENTER}</span>
+                            <span id="pitchValue">{initial_pitch}</span>
                         </div>
 
                         <div class="button-group">
@@ -543,6 +563,12 @@ async def get_status():
             "camera_active": False,
             "detection_count": 0
         })
+
+    # Read actual motor positions if connected
+    if tracker_instance.connected:
+        actual_yaw, actual_pitch = tracker_instance.read_motor_positions()
+        tracker_instance.current_yaw = actual_yaw
+        tracker_instance.current_pitch = actual_pitch
 
     return JSONResponse({
         "connected": tracker_instance.connected,
@@ -868,6 +894,19 @@ class CameraTracker:
             print(f"Failed to load model: {e}")
             self.model = None
 
+    def read_motor_positions(self):
+        """Read current positions from motors"""
+        if not self.motor_bus or not self.connected:
+            return self.current_yaw, self.current_pitch
+
+        try:
+            yaw_pos = self.motor_bus.read("Present_Position", "yaw", normalize=False)
+            pitch_pos = self.motor_bus.read("Present_Position", "pitch", normalize=False)
+            return int(yaw_pos), int(pitch_pos)
+        except Exception as e:
+            print(f"Error reading motor positions: {e}")
+            return self.current_yaw, self.current_pitch
+
     def connect_servos(self):
         """Connect to Feetech tracking servos"""
         import signal
@@ -896,14 +935,17 @@ class CameraTracker:
                 print(f"Connection timed out after 5 seconds on {self.port}")
                 raise
 
-            # Initialize to center positions
-            self.set_yaw(YAW_CENTER)
-            self.set_pitch(PITCH_CENTER)
-
             self.connected = True
+
+            # Read actual current positions from motors
+            actual_yaw, actual_pitch = self.read_motor_positions()
+            self.current_yaw = actual_yaw
+            self.current_pitch = actual_pitch
+
             print(f"✓ Connected to tracking servos on {self.port}")
             print(f"  Yaw motor (ID {YAW_MOTOR_ID}): {YAW_MIN}-{YAW_MAX} raw")
             print(f"  Pitch motor (ID {PITCH_MOTOR_ID}): {PITCH_MIN}-{PITCH_MAX} raw")
+            print(f"  Current positions: Yaw={actual_yaw}, Pitch={actual_pitch}")
 
         except Exception as e:
             print(f"Failed to connect to tracking servos: {e}")
