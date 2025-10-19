@@ -80,7 +80,7 @@ PITCH_CENTER = 250 # Start at level position
 TRIGGER_PWM_CHIP = 0  # PWM chip 0 (confirmed working)
 TRIGGER_PWM_CHANNEL = 0
 TRIGGER_NEUTRAL_ANGLE = 70  # Neutral position in degrees
-TRIGGER_ACTION_ANGLE = 30   # Trigger position in degrees
+TRIGGER_ACTION_ANGLE = 25   # Trigger position in degrees
 
 # Tracking configuration
 TARGET_CROSSHAIR_X = 320  # Center X position for target (640/2)
