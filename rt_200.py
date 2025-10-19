@@ -356,10 +356,11 @@ async def root():
                     status.className = 'servo-status error';
                     status.innerHTML = 'Error: ' + error.message;
                 }} finally {{
+                    // Re-enable button after trigger completes (1.5s - slightly longer than the 1s hold time)
                     setTimeout(() => {{
                         button.disabled = false;
                         status.style.display = 'none';
-                    }}, 3000);
+                    }}, 1500);
                 }}
             }}
 
