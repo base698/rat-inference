@@ -638,7 +638,7 @@ class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
-                 use_csi=False, invert_camera=True):
+                 use_csi=False, invert_camera=False):
         """
         Initialize the camera tracker
 
@@ -652,7 +652,7 @@ class CameraTracker:
             confidence_threshold: Detection confidence threshold
             camera_id: Camera device ID (0 for USB, varies for CSI)
             use_csi: Use CSI camera with GStreamer pipeline (Jetson)
-            invert_camera: Invert camera 180 degrees (for upside-down mounting)
+            invert_camera: Invert camera 180 degrees for upside-down mounting (default: False)
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -1366,8 +1366,8 @@ def main():
                        help="Camera device ID (default: 0)")
     parser.add_argument("--use-csi", action="store_true",
                        help="Use CSI camera with GStreamer pipeline (Jetson)")
-    parser.add_argument("--no-invert-camera", action="store_true",
-                       help="Don't invert camera (default: camera is inverted for upside-down mounting)")
+    parser.add_argument("--invert-camera", action="store_true",
+                       help="Invert camera 180 degrees for upside-down mounting")
     parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-08-24/weights/best.pt",
                        help="Path to YOLO model")
     parser.add_argument("--confidence", "-c", type=float, default=0.85,
@@ -1397,7 +1397,7 @@ def main():
         confidence_threshold=args.confidence,
         camera_id=args.camera_id,
         use_csi=args.use_csi,
-        invert_camera=not args.no_invert_camera  # Default is inverted
+        invert_camera=args.invert_camera
     )
     tracker_instance = tracker
 
@@ -1409,7 +1409,7 @@ def main():
     print(f"Camera: {'ENABLED' if args.enable_camera else 'DISABLED'}")
     if args.enable_camera:
         camera_type = "CSI (GStreamer)" if args.use_csi else "USB"
-        invert_status = "inverted (upside-down)" if not args.no_invert_camera else "normal"
+        invert_status = "inverted (upside-down)" if args.invert_camera else "normal"
         print(f"Camera type: {camera_type} (ID: {args.camera_id}, {invert_status})")
     print(f"Detection: {'ENABLED' if (args.enable_camera and args.model) else 'DISABLED'}")
     if args.enable_camera and args.model:
