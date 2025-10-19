@@ -35,6 +35,7 @@ COPY servo_test_sysfs.py ./
 COPY find_pwm.py ./
 COPY test_all_pwm.py ./
 COPY pitch_test.py ./
+COPY motor_scan.py ./
 
 # Copy model files
 COPY *.pt ./

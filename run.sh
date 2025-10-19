@@ -17,6 +17,7 @@ usage() {
     echo "  servo-test     - Test GPIO servo (Jetson.GPIO library)"
     echo "  servo-test-hw  - Test servo using hardware PWM (sysfs) - recommended"
     echo "  pitch-test     - Test pitch motor (read/write position)"
+    echo "  motor-scan     - Scan for Feetech motors and change IDs"
     echo "  shell          - Open a bash shell in the container"
     echo ""
     echo "Examples:"
@@ -28,6 +29,8 @@ usage() {
     echo "  $0 servo-test calibrate   # Interactive calibration (Jetson.GPIO)"
     echo "  $0 pitch-test             # Read current pitch position"
     echo "  $0 pitch-test 300         # Write pitch position to 300"
+    echo "  $0 motor-scan             # Scan for motors on IDs 1-20"
+    echo "  $0 motor-scan --set-id 1 5  # Change motor from ID 1 to ID 5"
     exit 1
 }
 
@@ -157,6 +160,18 @@ test_pitch() {
         python3 pitch_test.py "$@"
 }
 
+# Scan for motors and change IDs
+scan_motors() {
+    echo "Scanning for Feetech motors..."
+    docker run -it --rm \
+        --privileged \
+        --ipc=host \
+        --runtime=nvidia \
+        --device=/dev/ttyACM0:/dev/ttyACM0 \
+        $IMAGE_NAME \
+        python3 motor_scan.py "$@"
+}
+
 # Open a shell in the container
 run_shell() {
     echo "Opening shell in container..."
@@ -199,6 +214,10 @@ case "${1:-rt200}" in
     pitch-test)
         shift
         test_pitch "$@"
+        ;;
+    motor-scan)
+        shift
+        scan_motors "$@"
         ;;
     shell)
         run_shell

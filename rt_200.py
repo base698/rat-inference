@@ -68,12 +68,12 @@ tracker_instance = None  # Global reference to tracker for API access
 # Servo configuration for tracking servos
 YAW_MOTOR_ID = 1
 PITCH_MOTOR_ID = 5
-YAW_MIN = 1500  # Minimum yaw position (raw)
-YAW_MAX = 3500  # Maximum yaw position (raw)
+YAW_MIN = 1600  # Minimum yaw position (raw)
+YAW_MAX = 2600  # Maximum yaw position (raw)
 YAW_CENTER = (YAW_MIN + YAW_MAX) // 2  # Center position for yaw
 PITCH_MIN = 0    # Minimum pitch position (level, raw)
-PITCH_MAX = 600  # Maximum pitch position (~55 degrees down, raw)
-PITCH_CENTER = 300 # Start at level position
+PITCH_MAX = 500  # Maximum pitch position (~55 degrees down, raw)
+PITCH_CENTER = 250 # Start at level position
 
 # PWM servo configuration (trigger servo)
 # Using sysfs hardware PWM - Pin 15 (GPIO12) = PWM Chip 0
