@@ -371,35 +371,21 @@ async def root():
                 }}
             }}
 
-            async function updateStream() {{
-                try {{
-                    const response = await fetch('/stream-frame');
-                    if (response.ok) {{
-                        const data = await response.json();
-                        const img = document.getElementById('cameraStream');
-                        if (data.image) {{
-                            img.src = 'data:image/jpeg;base64,' + data.image;
-                            img.style.display = 'block';
-                        }}
+            function updateDetectionInfo(data) {{
+                // Update detection status
+                const detectionDiv = document.getElementById('detectionStatus');
+                if (data.detection) {{
+                    detectionDiv.className = 'detection-status detection-active';
+                    detectionDiv.innerHTML = `<strong>🐀 RAT DETECTED!</strong><br>Confidence: ${{data.confidence?.toFixed(3) || 'N/A'}}`;
+                }} else {{
+                    detectionDiv.className = 'detection-status';
+                    detectionDiv.innerHTML = 'No detection';
+                }}
 
-                        // Update detection status
-                        const detectionDiv = document.getElementById('detectionStatus');
-                        if (data.detection) {{
-                            detectionDiv.className = 'detection-status detection-active';
-                            detectionDiv.innerHTML = `<strong>🐀 RAT DETECTED!</strong><br>Confidence: ${{data.confidence?.toFixed(3) || 'N/A'}}`;
-                        }} else {{
-                            detectionDiv.className = 'detection-status';
-                            detectionDiv.innerHTML = 'No detection';
-                        }}
-
-                        // Update detections log
-                        if (data.recent_detections) {{
-                            const log = document.getElementById('detectionsLog');
-                            log.innerHTML = data.recent_detections.join('<br>');
-                        }}
-                    }}
-                }} catch (error) {{
-                    console.error('Stream update error:', error);
+                // Update detections log
+                if (data.recent_detections) {{
+                    const log = document.getElementById('detectionsLog');
+                    log.innerHTML = data.recent_detections.join('<br>');
                 }}
             }}
 
@@ -460,27 +446,46 @@ async def root():
 
             // Initialize Web Worker
             let worker = null;
-            try {{
-                worker = new Worker('/static/worker.js');
-                worker.onmessage = function(e) {{
-                    console.log('Worker response:', e);
-                }};
-                worker.onerror = function(e) {{
-                    console.error('Worker error:', e);
-                }};
-            }} catch (error) {{
-                console.error('Failed to initialize worker:', error);
-            }}
 
             // Start stream updates
             window.onload = function() {{
                 getStatus();
                 setInterval(getStatus, 2000);
 
-                // Update stream at ~15 FPS for smooth display
-                updateStream();
-                setInterval(updateStream, 66);  // ~15 FPS (1000ms / 15)
+                // Transfer canvas control to worker
+                const canvas = document.getElementById('cameraStream');
+                const offscreen = canvas.transferControlToOffscreen();
 
+                try {{
+                    worker = new Worker('/static/worker.js');
+
+                    // Handle messages from worker
+                    worker.onmessage = function(e) {{
+                        if (e.data.type === 'frame_data') {{
+                            // Worker has drawn the frame, now update detection info
+                            updateDetectionInfo(e.data);
+
+                            // Hide "waiting" message on first frame
+                            const noStream = document.getElementById('noStream');
+                            if (noStream && noStream.style.display !== 'none') {{
+                                noStream.style.display = 'none';
+                            }}
+                        }}
+                    }};
+
+                    worker.onerror = function(e) {{
+                        console.error('Worker error:', e);
+                    }};
+
+                    // Send canvas and start streaming
+                    worker.postMessage({{
+                        type: 'init',
+                        canvas: offscreen
+                    }}, [offscreen]);
+
+                }} catch (error) {{
+                    console.error('Failed to initialize worker:', error);
+                }}
             }};
         </script>
     </head>
@@ -492,8 +497,8 @@ async def root():
                 <div>
                     <h3>Camera View</h3>
                     <div class="camera-view">
-                        <img id="cameraStream" style="display:none;" alt="Camera stream">
-                        <div id="noStream" style="color: white;">Waiting for camera...</div>
+                        <canvas id="cameraStream" width="640" height="480" style="max-width: 100%; height: auto; border-radius: 10px;"></canvas>
+                        <div id="noStream" style="color: white; position: absolute;">Waiting for camera...</div>
                     </div>
 
                     <div id="detectionStatus" class="detection-status">
