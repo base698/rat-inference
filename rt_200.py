@@ -463,7 +463,7 @@ async def root():
             try {{
                 worker = new Worker('/static/worker.js');
                 worker.onmessage = function(e) {{
-                    console.log('Worker response:', e.data);
+                    console.log('Worker response:', e);
                 }};
                 worker.onerror = function(e) {{
                     console.error('Worker error:', e);

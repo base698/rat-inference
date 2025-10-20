@@ -13,6 +13,9 @@ self.addEventListener('message', function(e) {
     self.postMessage(result);
 });
 
+
+self.postMessage('hi');
+
 self.addEventListener('error', function(e) {
     console.error('Worker error:', e);
 });
