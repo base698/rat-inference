@@ -91,7 +91,7 @@ TRIGGER_ACTION_ANGLE = 20   # Trigger position in degrees
 
 # Tracking configuration
 TARGET_CROSSHAIR_X = 300  # Center X position for target (320 - 20 = 300, moved left)
-TARGET_CROSSHAIR_Y = 210  # Center Y position for target (240 - 20 = 220, moved up)
+TARGET_CROSSHAIR_Y = 240  # Center Y position for target (210 + 30 = 240, moved down)
 CROSSHAIR_SIZE = 20       # Size of crosshair in pixels
 VIDEO_FPS = 30            # Video display frame rate
 INFERENCE_FPS = 7         # Inference frame rate
