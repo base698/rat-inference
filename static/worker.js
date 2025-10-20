@@ -12,15 +12,17 @@ self.addEventListener('message', async function(e) {
         // Start streaming loop
         if (!streamInterval) {
             streamLoop();
-            streamInterval = setInterval(streamLoop, 66);  // ~15 FPS
+            streamInterval = setInterval(streamLoop, 90);  // ~15 FPS
         }
     }
 });
 
+let fetching = false;
 async function streamLoop() {
-    if (!canvas || !ctx) return;
+    if (!canvas || !ctx || fetching) return;
 
     try {
+        fetching = true;
         // Fetch frame data from server
         const response = await fetch('/stream-frame');
         if (!response.ok) return;
@@ -47,6 +49,7 @@ async function streamLoop() {
     } catch (error) {
         console.error('Stream loop error:', error);
     }
+    fetching = false;
 }
 
 self.addEventListener('error', function(e) {
