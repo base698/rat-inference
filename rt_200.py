@@ -15,7 +15,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import numpy as np
 
@@ -64,6 +65,12 @@ except ImportError:
 
 app = FastAPI()
 tracker_instance = None  # Global reference to tracker for API access
+
+# Create static directory if it doesn't exist
+os.makedirs("static", exist_ok=True)
+
+# Mount static files directory for serving JS, CSS, and other assets
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Servo configuration for tracking servos
 YAW_MOTOR_ID = 1
@@ -360,7 +367,7 @@ async def root():
                     setTimeout(() => {{
                         button.disabled = false;
                         status.style.display = 'none';
-                    }}, 1500);
+                    }}, 1200);
                 }}
             }}
 
@@ -451,6 +458,20 @@ async def root():
                 }}
             }});
 
+            // Initialize Web Worker
+            let worker = null;
+            try {{
+                worker = new Worker('/static/worker.js');
+                worker.onmessage = function(e) {{
+                    console.log('Worker response:', e.data);
+                }};
+                worker.onerror = function(e) {{
+                    console.error('Worker error:', e);
+                }};
+            }} catch (error) {{
+                console.error('Failed to initialize worker:', error);
+            }}
+
             // Start stream updates
             window.onload = function() {{
                 getStatus();
@@ -459,6 +480,7 @@ async def root():
                 // Update stream at ~15 FPS for smooth display
                 updateStream();
                 setInterval(updateStream, 66);  // ~15 FPS (1000ms / 15)
+
             }};
         </script>
     </head>
@@ -1298,7 +1320,7 @@ class CameraTracker:
         """Inference processing thread at 15 FPS"""
         while self.camera_active:
             self.run_inference()
-            time.sleep(1.0 / INFERENCE_FPS)  # 15 FPS
+            time.sleep(1.0 / INFERENCE_FPS)  
 
     def start_camera_thread(self):
         """Start the camera processing thread"""
@@ -1369,9 +1391,9 @@ def main():
                        help="Use CSI camera with GStreamer pipeline (Jetson)")
     parser.add_argument("--invert-camera", action="store_true",
                        help="Invert camera 180 degrees for upside-down mounting")
-    parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-08-24/weights/best.pt",
+    parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-10-20/weights/best.pt",
                        help="Path to YOLO model")
-    parser.add_argument("--confidence", "-c", type=float, default=0.85,
+    parser.add_argument("--confidence", "-c", type=float, default=0.75,
                        help="Detection confidence threshold")
 
     # Trigger servo settings

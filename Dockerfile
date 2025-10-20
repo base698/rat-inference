@@ -42,6 +42,9 @@ COPY *.pt ./
 # Copy runs directory with trained models
 COPY runs ./runs
 
+# Copy static files directory
+COPY static ./static
+
 # Create detections directory for rt_200.py
 RUN mkdir -p detections
 

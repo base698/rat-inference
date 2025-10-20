@@ -132,10 +132,17 @@ class RatLabeler:
         
         try:
             img = Image.open(self.current_image_path)
-            
-            if img.mode == 'RGBA':
+
+            print(f"DEBUG: Loaded image - Size: {img.size}, Mode: {img.mode}, Format: {img.format}")
+
+            # Convert all images to RGB mode for Tkinter compatibility
+            if img.mode not in ('RGB', 'L'):
+                print(f"DEBUG: Converting from {img.mode} to RGB")
                 img = img.convert('RGB')
-            
+            elif img.mode == 'L':
+                print(f"DEBUG: Converting from grayscale (L) to RGB")
+                img = img.convert('RGB')
+
             self.current_image = img
             
             canvas_width = self.canvas.winfo_width()
@@ -151,9 +158,37 @@ class RatLabeler:
             
             new_width = int(img.width * self.scale_factor)
             new_height = int(img.height * self.scale_factor)
-            
-            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            self.photo_image = ImageTk.PhotoImage(img_resized)
+
+            # Ensure dimensions are at least 1x1
+            new_width = max(1, new_width)
+            new_height = max(1, new_height)
+
+            print(f"DEBUG: Resizing {img.size} -> ({new_width}, {new_height}), scale={self.scale_factor}")
+
+            # Use LANCZOS for high-quality downsampling (compatible across PIL versions)
+            try:
+                # Try new-style enum first (Pillow >= 10.0.0)
+                img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            except AttributeError:
+                # Fall back to old-style constant for older Pillow versions
+                img_resized = img.resize((new_width, new_height), Image.LANCZOS)
+
+            print(f"DEBUG: Creating PhotoImage from resized image...")
+            try:
+                self.photo_image = ImageTk.PhotoImage(img_resized)
+            except Exception as e:
+                print(f"DEBUG: Direct PhotoImage creation failed: {e}")
+                print(f"DEBUG: Trying workaround - saving to temp file...")
+                # Workaround: Save to temp file and reload
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp_path = tmp.name
+                    img_resized.save(tmp_path, 'PNG')
+                temp_img = Image.open(tmp_path)
+                self.photo_image = ImageTk.PhotoImage(temp_img)
+                os.remove(tmp_path)
+                print(f"DEBUG: Workaround successful")
+            print(f"DEBUG: PhotoImage created successfully")
             
             self.canvas.delete("all")
             self.canvas.create_image(canvas_width//2, canvas_height//2, 
