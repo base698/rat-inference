@@ -299,42 +299,67 @@ async def root():
         <script>
             let yawValue = {initial_yaw};  // Initialized from actual motor position
             let pitchValue = {initial_pitch};  // Initialized from actual motor position
+            let desiredYaw = {initial_yaw};  // Desired yaw value from slider
+            let desiredPitch = {initial_pitch};  // Desired pitch value from slider
+            let positionFetching = false;
             let streamInterval = null;
 
-            async function updatePosition(yaw = null, pitch = null) {{
+            function updateSlider(yaw = null, pitch = null) {{
+                // Update desired values and UI immediately
                 if (yaw !== null) {{
-                    yawValue = parseInt(yaw);
-                    document.getElementById('yawSlider').value = yawValue;
-                    document.getElementById('yawValue').textContent = yawValue;
+                    desiredYaw = parseInt(yaw);
+                    document.getElementById('yawSlider').value = desiredYaw;
+                    document.getElementById('yawValue').textContent = desiredYaw;
                 }}
                 if (pitch !== null) {{
-                    pitchValue = parseInt(pitch);
-                    document.getElementById('pitchSlider').value = pitchValue;
-                    document.getElementById('pitchValue').textContent = pitchValue;
+                    desiredPitch = parseInt(pitch);
+                    document.getElementById('pitchSlider').value = desiredPitch;
+                    document.getElementById('pitchValue').textContent = desiredPitch;
+                }}
+
+                // Trigger position update
+                sendPositionUpdate();
+            }}
+
+            async function sendPositionUpdate() {{
+                // Skip if already sending or if values haven't changed
+                if (positionFetching || (desiredYaw === yawValue && desiredPitch === pitchValue)) {{
+                    return;
                 }}
 
                 try {{
+                    positionFetching = true;
                     const response = await fetch('/set-position', {{
                         method: 'POST',
                         headers: {{
                             'Content-Type': 'application/json',
                         }},
                         body: JSON.stringify({{
-                            yaw: yawValue,
-                            pitch: pitchValue
+                            yaw: desiredYaw,
+                            pitch: desiredPitch
                         }})
                     }});
                     const result = await response.json();
-                    if (!result.success) {{
+                    if (result.success) {{
+                        // Update current values on success
+                        yawValue = desiredYaw;
+                        pitchValue = desiredPitch;
+                    }} else {{
                         console.error('Failed to set position:', result.message);
                     }}
                 }} catch (error) {{
                     console.error('Error:', error);
+                }} finally {{
+                    positionFetching = false;
+                    // Check if values changed while we were sending
+                    if (desiredYaw !== yawValue || desiredPitch !== pitchValue) {{
+                        setTimeout(sendPositionUpdate, 50);
+                    }}
                 }}
             }}
 
-            async function centerServos() {{
-                await updatePosition({YAW_CENTER}, {PITCH_CENTER});
+            function centerServos() {{
+                updateSlider({YAW_CENTER}, {PITCH_CENTER});
             }}
 
             async function triggerServo() {{
@@ -389,8 +414,12 @@ async def root():
                 }}
             }}
 
+            let statusFetching = false;
             async function getStatus() {{
+                if (statusFetching) return;
+
                 try {{
+                    statusFetching = true;
                     const response = await fetch('/status');
                     const status = await response.json();
                     document.getElementById('connectionStatus').textContent =
@@ -408,6 +437,8 @@ async def root():
                     // Status text shows the tracked position, sliders show commanded position
                 }} catch (error) {{
                     console.error('Error getting status:', error);
+                }} finally {{
+                    statusFetching = false;
                 }}
             }}
 
@@ -417,24 +448,24 @@ async def root():
                 switch(event.key) {{
                     case 'ArrowLeft':
                         event.preventDefault();
-                        await updatePosition(Math.max({YAW_MIN}, yawValue - step), null);
+                        updateSlider(Math.max({YAW_MIN}, desiredYaw - step), null);
                         break;
                     case 'ArrowRight':
                         event.preventDefault();
-                        await updatePosition(Math.min({YAW_MAX}, yawValue + step), null);
+                        updateSlider(Math.min({YAW_MAX}, desiredYaw + step), null);
                         break;
                     case 'ArrowUp':
                         event.preventDefault();
-                        await updatePosition(null, Math.max({PITCH_MIN}, pitchValue - step));
+                        updateSlider(null, Math.max({PITCH_MIN}, desiredPitch - step));
                         break;
                     case 'ArrowDown':
                         event.preventDefault();
-                        await updatePosition(null, Math.min({PITCH_MAX}, pitchValue + step));
+                        updateSlider(null, Math.min({PITCH_MAX}, desiredPitch + step));
                         break;
                     case 'c':
                     case 'C':
                         event.preventDefault();
-                        await centerServos();
+                        centerServos();
                         break;
                     case 't':
                     case 'T':
@@ -530,7 +561,7 @@ async def root():
                                    min="{YAW_MIN}"
                                    max="{YAW_MAX}"
                                    value="{initial_yaw}"
-                                   oninput="updatePosition(this.value, null)">
+                                   oninput="updateSlider(this.value, null)">
                             <span id="yawValue">{initial_yaw}</span>
                         </div>
 
@@ -540,7 +571,7 @@ async def root():
                                    min="{PITCH_MIN}"
                                    max="{PITCH_MAX}"
                                    value="{initial_pitch}"
-                                   oninput="updatePosition(null, this.value)">
+                                   oninput="updateSlider(null, this.value)">
                             <span id="pitchValue">{initial_pitch}</span>
                         </div>
 

@@ -104,7 +104,7 @@ run_inference() {
         -v $(pwd):/app/data \
         $IMAGE_NAME \
         python3 inference.py \
-            --model runs/yolo11n-2025-08-24/weights/best.pt \
+            --model runs/yolo11n-2025-10-20/weights/best.pt \
             "${ARGS[@]}"
 }
 
