@@ -61,7 +61,7 @@ run_rt200() {
         python3 rt_200.py \
             --enable-camera \
             --port /dev/ttyACM0 \
-            --model runs/yolo11n-2025-08-24/weights/best.pt \
+            --model runs/yolo11n-2025-10-20/weights/best.pt \
             --use-csi \
             --camera-id 0 \
             "$@"
