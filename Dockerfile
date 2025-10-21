@@ -30,10 +30,8 @@ COPY inference.py ./
 COPY rt_200.py ./
 COPY test_camera.py ./
 COPY csi_camera_capture.py ./
-COPY servo_test.py ./
 COPY servo_test_sysfs.py ./
-COPY find_pwm.py ./
-COPY test_all_pwm.py ./
+COPY trigger_position_test.py ./
 COPY pitch_test.py ./
 
 # Copy model files
