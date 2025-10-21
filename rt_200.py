@@ -444,7 +444,7 @@ async def root():
 
             // Keyboard control
             document.addEventListener('keydown', async (event) => {{
-                const step = 6;
+                const step = 5;
                 switch(event.key) {{
                     case 'ArrowLeft':
                         event.preventDefault();
