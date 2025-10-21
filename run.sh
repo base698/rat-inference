@@ -44,7 +44,8 @@ build() {
 run_rt200() {
     echo "Starting rt_200.py server..."
     echo "Web interface will be available at http://localhost:8000"
-    docker run -it --rm \
+    docker run -d --rm \
+        --name rat-inference \
         --privileged \
         --ipc=host \
         --runtime=nvidia \
@@ -65,6 +66,11 @@ run_rt200() {
             --use-csi \
             --camera-id 0 \
             "$@"
+
+    echo ""
+    echo "Container started in background with name: rat-inference"
+    echo "To view logs: docker logs -f rat-inference"
+    echo "To stop: docker stop rat-inference"
 }
 
 # Run inference.py
