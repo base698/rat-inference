@@ -86,8 +86,8 @@ PITCH_CENTER = 250 # Start at level position
 # Using sysfs hardware PWM - Pin 15 (GPIO12) = PWM Chip 0
 TRIGGER_PWM_CHIP = 0  # PWM chip 0 (confirmed working)
 TRIGGER_PWM_CHANNEL = 0
-TRIGGER_NEUTRAL_ANGLE = 70  # Neutral position in degrees
-TRIGGER_ACTION_ANGLE = 20   # Trigger position in degrees
+TRIGGER_NEUTRAL_ANGLE = 99  # Neutral position in degrees (rest/safe position)
+TRIGGER_ACTION_ANGLE = 38   # Trigger position in degrees (activated trap)
 
 # Tracking configuration
 TARGET_CROSSHAIR_X = 300  # Center X position for target (320 - 20 = 300, moved left)
