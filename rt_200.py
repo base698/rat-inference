@@ -91,7 +91,7 @@ TRIGGER_ACTION_ANGLE = 38   # Trigger position in degrees (activated trap)
 
 # Tracking configuration
 TARGET_CROSSHAIR_X = 300  # Center X position for target (320 - 20 = 300, moved left)
-TARGET_CROSSHAIR_Y = 240  # Center Y position for target (210 + 30 = 240, moved down)
+TARGET_CROSSHAIR_Y = 230  # Center Y position for target (240 - 10 = 230, moved up 10px)
 CROSSHAIR_SIZE = 20       # Size of crosshair in pixels
 VIDEO_FPS = 30            # Video display frame rate
 INFERENCE_FPS = 7         # Inference frame rate
@@ -444,7 +444,7 @@ async def root():
 
             // Keyboard control
             document.addEventListener('keydown', async (event) => {{
-                const step = 10;
+                const step = 6;
                 switch(event.key) {{
                     case 'ArrowLeft':
                         event.preventDefault();
