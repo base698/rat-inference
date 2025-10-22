@@ -307,12 +307,16 @@ async def root():
             function updateSlider(yaw = null, pitch = null) {{
                 // Update desired values and UI immediately
                 if (yaw !== null) {{
-                    desiredYaw = parseInt(yaw);
+                    desiredYaw = parseInt(yaw, 10);  // Explicit base-10 parsing
+                    // Clamp to valid range
+                    desiredYaw = Math.max({YAW_MIN}, Math.min({YAW_MAX}, desiredYaw));
                     document.getElementById('yawSlider').value = desiredYaw;
                     document.getElementById('yawValue').textContent = desiredYaw;
                 }}
                 if (pitch !== null) {{
-                    desiredPitch = parseInt(pitch);
+                    desiredPitch = parseInt(pitch, 10);  // Explicit base-10 parsing
+                    // Clamp to valid range
+                    desiredPitch = Math.max({PITCH_MIN}, Math.min({PITCH_MAX}, desiredPitch));
                     document.getElementById('pitchSlider').value = desiredPitch;
                     document.getElementById('pitchValue').textContent = desiredPitch;
                 }}
@@ -1013,8 +1017,11 @@ class CameraTracker:
             return
 
         try:
+            # Ensure value is a positive integer (unsigned)
+            # Feetech servos use 16-bit unsigned position values (0-65535)
+            value = int(value) & 0xFFFF  # Mask to 16-bit unsigned
             # Write directly to Goal_Position register
-            self.motor_bus.write("Goal_Position", motor_name, int(value), normalize=False)
+            self.motor_bus.write("Goal_Position", motor_name, value, normalize=False)
         except Exception as e:
             print(f"Error writing to {motor_name}: {e}")
 

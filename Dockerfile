@@ -51,4 +51,4 @@ EXPOSE 8000
 
 # Default command runs the rt_200.py server
 # Users can override this to run inference.py instead
-CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect"]
+CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--model", "runs/yolo11n-2025-10-22/weights/best.pt"]
