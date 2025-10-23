@@ -62,7 +62,7 @@ run_rt200() {
         python3 rt_200.py \
             --enable-camera \
             --port /dev/ttyACM0 \
-            --model runs/yolo11n-2025-10-22/weights/best.pt \
+            --model runs/yolo11n-2025-10-23/weights/best.pt \
             --use-csi \
             --camera-id 0 \
             "$@"
@@ -110,7 +110,7 @@ run_inference() {
         -v $(pwd):/app/data \
         $IMAGE_NAME \
         python3 inference.py \
-            --model runs/yolo11n-2025-10-22/weights/best.pt \
+            --model runs/yolo11n-2025-10-23/weights/best.pt \
             "${ARGS[@]}"
 }
 
