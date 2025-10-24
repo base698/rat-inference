@@ -14,9 +14,10 @@ import io
 import shutil
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from typing import Dict
 import uvicorn
 import numpy as np
 
@@ -98,10 +99,12 @@ INFERENCE_FPS = 7         # Inference frame rate
 
 @app.get("/")
 async def root():
-    """Root endpoint with control interface and camera view"""
-    enable_trigger = tracker_instance and tracker_instance.trigger_servo_enabled
+    """Root endpoint - serve static HTML file"""
+    return FileResponse("static/index.html")
 
-    # Get actual motor positions if connected, otherwise use center values
+@app.get("/config")
+async def get_config():
+    """Get configuration values for the UI"""
     if tracker_instance and tracker_instance.connected:
         initial_yaw = tracker_instance.current_yaw
         initial_pitch = tracker_instance.current_pitch
@@ -109,502 +112,19 @@ async def root():
         initial_yaw = YAW_CENTER
         initial_pitch = PITCH_CENTER
 
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Camera Tracker Control</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                margin: 20px;
-                background-color: #f0f0f0;
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 0 auto;
-                background-color: white;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }}
-            h1 {{ color: #333; }}
-            .main-grid {{
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin-top: 20px;
-            }}
-            .camera-view {{
-                background-color: #000;
-                min-height: 480px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-radius: 10px;
-                position: relative;
-            }}
-            .camera-view img {{
-                max-width: 100%;
-                height: auto;
-                border-radius: 10px;
-                display: block;
-                position: absolute;
-                margin-top: -62px;
-            }}
-            .status {{
-                padding: 10px;
-                margin: 10px 0;
-                border-radius: 5px;
-                background-color: #e7f3ff;
-                border: 1px solid #b3d9ff;
-            }}
-            .detection-status {{
-                padding: 10px;
-                margin: 10px 0;
-                border-radius: 5px;
-                background-color: #fff3cd;
-                border: 1px solid #ffc107;
-            }}
-            .detection-active {{
-                background-color: #f8d7da;
-                border: 1px solid #f5c6cb;
-                animation: blink 1s infinite;
-            }}
-            @keyframes blink {{
-                0%, 50%, 100% {{ opacity: 1; }}
-                25%, 75% {{ opacity: 0.5; }}
-            }}
-            .controls {{
-                margin: 20px 0;
-                padding: 20px;
-                border: 2px solid #ddd;
-                border-radius: 10px;
-                background-color: #f9f9f9;
-            }}
-            .control-group {{
-                margin: 15px 0;
-            }}
-            .control-group label {{
-                display: inline-block;
-                width: 120px;
-                font-weight: bold;
-            }}
-            .control-group input[type="range"] {{
-                width: 300px;
-                vertical-align: middle;
-            }}
-            .control-group span {{
-                display: inline-block;
-                width: 60px;
-                text-align: center;
-                font-family: monospace;
-                background-color: #e0e0e0;
-                padding: 2px 5px;
-                border-radius: 3px;
-            }}
-            .button-group {{
-                margin: 20px 0;
-                text-align: center;
-            }}
-            button {{
-                background-color: #4CAF50;
-                border: none;
-                color: white;
-                padding: 10px 20px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 14px;
-                margin: 4px 8px;
-                cursor: pointer;
-                border-radius: 5px;
-                transition: background-color 0.3s;
-            }}
-            button:hover {{
-                background-color: #45a049;
-            }}
-            button.center {{
-                background-color: #008CBA;
-            }}
-            button.center:hover {{
-                background-color: #007399;
-            }}
-            button.trigger {{
-                background-color: #ff9800;
-                padding: 15px 30px;
-                font-size: 16px;
-            }}
-            button.trigger:hover {{
-                background-color: #e68900;
-            }}
-            button:disabled {{
-                background-color: #cccccc;
-                cursor: not-allowed;
-            }}
-            .keyboard-info {{
-                margin-top: 20px;
-                padding: 15px;
-                background-color: #fff3cd;
-                border: 1px solid #ffc107;
-                border-radius: 5px;
-            }}
-            .keyboard-info h3 {{
-                margin-top: 0;
-                color: #856404;
-            }}
-            .key-list {{
-                font-family: monospace;
-                line-height: 1.8;
-            }}
-            .key {{
-                background-color: #e0e0e0;
-                padding: 2px 6px;
-                border-radius: 3px;
-                border: 1px solid #999;
-                font-weight: bold;
-            }}
-            .servo-status {{
-                margin: 10px 0;
-                padding: 10px;
-                border-radius: 4px;
-            }}
-            .servo-status.success {{
-                background-color: #d4edda;
-                color: #155724;
-                border: 1px solid #c3e6cb;
-            }}
-            .servo-status.error {{
-                background-color: #f8d7da;
-                color: #721c24;
-                border: 1px solid #f5c6cb;
-            }}
-            .servo-status.info {{
-                background-color: #d1ecf1;
-                color: #0c5460;
-                border: 1px solid #bee5eb;
-            }}
-            .detections-log {{
-                max-height: 200px;
-                overflow-y: auto;
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 5px;
-                padding: 10px;
-                margin-top: 10px;
-                font-family: monospace;
-                font-size: 12px;
-            }}
-        </style>
-        <script>
-            let yawValue = {initial_yaw};  // Initialized from actual motor position
-            let pitchValue = {initial_pitch};  // Initialized from actual motor position
-            let desiredYaw = {initial_yaw};  // Desired yaw value from slider
-            let desiredPitch = {initial_pitch};  // Desired pitch value from slider
-            let positionFetching = false;
-            let streamInterval = null;
-
-            function updateSlider(yaw = null, pitch = null) {{
-                // Update desired values and UI immediately
-                if (yaw !== null) {{
-                    desiredYaw = parseInt(yaw, 10);  // Explicit base-10 parsing
-                    // Clamp to valid range
-                    desiredYaw = Math.max({YAW_MIN}, Math.min({YAW_MAX}, desiredYaw));
-                    document.getElementById('yawSlider').value = desiredYaw;
-                    document.getElementById('yawValue').textContent = desiredYaw;
-                }}
-                if (pitch !== null) {{
-                    desiredPitch = parseInt(pitch, 10);  // Explicit base-10 parsing
-                    // Clamp to valid range
-                    desiredPitch = Math.max({PITCH_MIN}, Math.min({PITCH_MAX}, desiredPitch));
-                    document.getElementById('pitchSlider').value = desiredPitch;
-                    document.getElementById('pitchValue').textContent = desiredPitch;
-                }}
-
-                // Trigger position update
-                sendPositionUpdate();
-            }}
-
-            async function sendPositionUpdate() {{
-                // Skip if already sending or if values haven't changed
-                if (positionFetching || (desiredYaw === yawValue && desiredPitch === pitchValue)) {{
-                    return;
-                }}
-
-                try {{
-                    positionFetching = true;
-                    const response = await fetch('/set-position', {{
-                        method: 'POST',
-                        headers: {{
-                            'Content-Type': 'application/json',
-                        }},
-                        body: JSON.stringify({{
-                            yaw: desiredYaw,
-                            pitch: desiredPitch
-                        }})
-                    }});
-                    const result = await response.json();
-                    if (result.success) {{
-                        // Update current values on success
-                        yawValue = desiredYaw;
-                        pitchValue = desiredPitch;
-                    }} else {{
-                        console.error('Failed to set position:', result.message);
-                    }}
-                }} catch (error) {{
-                    console.error('Error:', error);
-                }} finally {{
-                    positionFetching = false;
-                    // Check if values changed while we were sending
-                    if (desiredYaw !== yawValue || desiredPitch !== pitchValue) {{
-                        setTimeout(sendPositionUpdate, 50);
-                    }}
-                }}
-            }}
-
-            function centerServos() {{
-                updateSlider({YAW_CENTER}, {PITCH_CENTER});
-            }}
-
-            async function triggerServo() {{
-                const button = document.getElementById('triggerButton');
-                const status = document.getElementById('triggerStatus');
-
-                button.disabled = true;
-                status.className = 'servo-status info';
-                status.innerHTML = 'Triggering servo...';
-                status.style.display = 'block';
-
-                try {{
-                    const response = await fetch('/trigger-servo', {{
-                        method: 'POST'
-                    }});
-                    const result = await response.json();
-
-                    if (result.success) {{
-                        status.className = 'servo-status success';
-                        status.innerHTML = result.message;
-                    }} else {{
-                        status.className = 'servo-status error';
-                        status.innerHTML = result.message;
-                    }}
-                }} catch (error) {{
-                    status.className = 'servo-status error';
-                    status.innerHTML = 'Error: ' + error.message;
-                }} finally {{
-                    // Re-enable button after trigger completes (1.5s - slightly longer than the 1s hold time)
-                    setTimeout(() => {{
-                        button.disabled = false;
-                        status.style.display = 'none';
-                    }}, 1200);
-                }}
-            }}
-
-            function updateDetectionInfo(data) {{
-                // Update detection status
-                const detectionDiv = document.getElementById('detectionStatus');
-                if (data.detection) {{
-                    detectionDiv.className = 'detection-status detection-active';
-                    detectionDiv.innerHTML = `<strong>🐀 RAT DETECTED!</strong><br>Confidence: ${{data.confidence?.toFixed(3) || 'N/A'}}`;
-                }} else {{
-                    detectionDiv.className = 'detection-status';
-                    detectionDiv.innerHTML = 'No detection';
-                }}
-
-                // Update detections log
-                if (data.recent_detections) {{
-                    const log = document.getElementById('detectionsLog');
-                    log.innerHTML = data.recent_detections.join('<br>');
-                }}
-            }}
-
-            let statusFetching = false;
-            async function getStatus() {{
-                if (statusFetching) return;
-
-                try {{
-                    statusFetching = true;
-                    const response = await fetch('/status');
-                    const status = await response.json();
-                    document.getElementById('connectionStatus').textContent =
-                        status.connected ? 'Connected' : 'Disconnected';
-                    document.getElementById('yawStatus').textContent =
-                        'Yaw: ' + status.yaw_position;
-                    document.getElementById('pitchStatus').textContent =
-                        'Pitch: ' + status.pitch_position;
-                    document.getElementById('cameraStatus').textContent =
-                        'Camera: ' + (status.camera_active ? 'Active' : 'Inactive');
-                    document.getElementById('detectionCount').textContent =
-                        'Total Detections: ' + (status.detection_count || 0);
-
-                    // Don't update sliders from status - let user control them directly
-                    // Status text shows the tracked position, sliders show commanded position
-                }} catch (error) {{
-                    console.error('Error getting status:', error);
-                }} finally {{
-                    statusFetching = false;
-                }}
-            }}
-
-            // Keyboard control
-            document.addEventListener('keydown', async (event) => {{
-                const step = 5;
-                switch(event.key) {{
-                    case 'ArrowLeft':
-                        event.preventDefault();
-                        updateSlider(Math.max({YAW_MIN}, desiredYaw - step), null);
-                        break;
-                    case 'ArrowRight':
-                        event.preventDefault();
-                        updateSlider(Math.min({YAW_MAX}, desiredYaw + step), null);
-                        break;
-                    case 'ArrowUp':
-                        event.preventDefault();
-                        updateSlider(null, Math.max({PITCH_MIN}, desiredPitch - step));
-                        break;
-                    case 'ArrowDown':
-                        event.preventDefault();
-                        updateSlider(null, Math.min({PITCH_MAX}, desiredPitch + step));
-                        break;
-                    case 'c':
-                    case 'C':
-                        event.preventDefault();
-                        centerServos();
-                        break;
-                    case 't':
-                    case 'T':
-                        event.preventDefault();
-                        await triggerServo();
-                        break;
-                }}
-            }});
-
-            // Initialize Web Worker
-            let worker = null;
-
-            // Start stream updates
-            window.onload = function() {{
-                getStatus();
-                setInterval(getStatus, 2000);
-
-                // Transfer canvas control to worker
-                const canvas = document.getElementById('cameraStream');
-                const offscreen = canvas.transferControlToOffscreen();
-
-                try {{
-                    worker = new Worker('/static/worker.js');
-
-                    // Handle messages from worker
-                    worker.onmessage = function(e) {{
-                        if (e.data.type === 'frame_data') {{
-                            // Worker has drawn the frame, now update detection info
-                            updateDetectionInfo(e.data);
-
-                            // Hide "waiting" message on first frame
-                            const noStream = document.getElementById('noStream');
-                            if (noStream && noStream.style.display !== 'none') {{
-                                noStream.style.display = 'none';
-                            }}
-                        }}
-                    }};
-
-                    worker.onerror = function(e) {{
-                        console.error('Worker error:', e);
-                    }};
-
-                    // Send canvas and start streaming
-                    worker.postMessage({{
-                        type: 'init',
-                        canvas: offscreen
-                    }}, [offscreen]);
-
-                }} catch (error) {{
-                    console.error('Failed to initialize worker:', error);
-                }}
-            }};
-        </script>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Camera Tracker Control with Detection</h1>
-
-            <div class="main-grid">
-                <div>
-                    <h3>Camera View</h3>
-                    <div class="camera-view">
-                        <canvas id="cameraStream" width="640" height="480" style="max-width: 100%; height: auto; border-radius: 10px;"></canvas>
-                        <div id="noStream" style="color: white; position: absolute;">Waiting for camera...</div>
-                    </div>
-
-                    <div id="detectionStatus" class="detection-status">
-                        No detection
-                    </div>
-
-                    <div class="detections-log">
-                        <strong>Recent Detections:</strong>
-                        <div id="detectionsLog">No detections yet</div>
-                    </div>
-                </div>
-
-                <div>
-                    <div class="status">
-                        <h3>System Status</h3>
-                        <div id="connectionStatus">Checking...</div>
-                        <div id="cameraStatus">Camera: --</div>
-                        <div id="yawStatus">Yaw: --</div>
-                        <div id="pitchStatus">Pitch: --</div>
-                        <div id="detectionCount">Total Detections: 0</div>
-                    </div>
-
-                    <div class="controls">
-                        <h3>Servo Control</h3>
-
-                        <div class="control-group">
-                            <label for="yawSlider">Yaw (L/R):</label>
-                            <input type="range" id="yawSlider"
-                                   min="{YAW_MIN}"
-                                   max="{YAW_MAX}"
-                                   value="{initial_yaw}"
-                                   oninput="updateSlider(this.value, null)">
-                            <span id="yawValue">{initial_yaw}</span>
-                        </div>
-
-                        <div class="control-group">
-                            <label for="pitchSlider">Pitch (U/D):</label>
-                            <input type="range" id="pitchSlider"
-                                   min="{PITCH_MIN}"
-                                   max="{PITCH_MAX}"
-                                   value="{initial_pitch}"
-                                   oninput="updateSlider(null, this.value)">
-                            <span id="pitchValue">{initial_pitch}</span>
-                        </div>
-
-                        <div class="button-group">
-                            <button class="center" onclick="centerServos()">Center Servos</button>
-                            <button id="triggerButton" class="trigger" onclick="triggerServo()"
-                                    {'disabled' if not enable_trigger else ''}>
-                                Trigger Action
-                            </button>
-                            <div id="triggerStatus" class="servo-status" style="display: none;"></div>
-                        </div>
-                    </div>
-
-                    <div class="keyboard-info">
-                        <h3>Keyboard Controls</h3>
-                        <div class="key-list">
-                            <div><span class="key">←</span> / <span class="key">→</span> - Yaw left/right</div>
-                            <div><span class="key">↑</span> / <span class="key">↓</span> - Pitch up/down</div>
-                            <div><span class="key">C</span> - Center both servos</div>
-                            <div><span class="key">T</span> - Trigger action servo</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
+    return JSONResponse({
+        "YAW_MIN": YAW_MIN,
+        "YAW_MAX": YAW_MAX,
+        "YAW_CENTER": YAW_CENTER,
+        "PITCH_MIN": PITCH_MIN,
+        "PITCH_MAX": PITCH_MAX,
+        "PITCH_CENTER": PITCH_CENTER,
+        "TARGET_CROSSHAIR_X": TARGET_CROSSHAIR_X,
+        "TARGET_CROSSHAIR_Y": TARGET_CROSSHAIR_Y,
+        "initial_yaw": initial_yaw,
+        "initial_pitch": initial_pitch,
+        "enable_trigger": tracker_instance.trigger_servo_enabled if tracker_instance else False
+    })
 
 @app.get("/status")
 async def get_status():
@@ -696,6 +216,52 @@ async def trigger_servo():
             content={"success": False, "message": f"Error triggering servo: {str(e)}"},
             status_code=500
         )
+
+@app.get("/detections/{filename}")
+async def get_detection(filename: str):
+    """Serve detection image files"""
+    detection_path = Path("detections") / filename
+    if not detection_path.exists():
+        raise HTTPException(status_code=404, detail="Detection image not found")
+    return FileResponse(detection_path)
+
+@app.post("/move-to-position")
+async def move_to_position(request: Dict):
+    """Move tracker to clicked canvas position"""
+    if not tracker_instance:
+        return JSONResponse({
+            "success": False,
+            "message": "Tracker not initialized"
+        })
+
+    try:
+        x = request.get("x")
+        y = request.get("y")
+
+        if x is None or y is None:
+            return JSONResponse({
+                "success": False,
+                "message": "Missing x or y coordinates"
+            })
+
+        # Use the move_to_pixel function for direct positioning (not PID controller)
+        desired_yaw, desired_pitch = tracker_instance.move_to_pixel(x, y)
+
+        # Update servo positions
+        tracker_instance.set_yaw(desired_yaw)
+        tracker_instance.set_pitch(desired_pitch)
+
+        return JSONResponse({
+            "success": True,
+            "message": f"Moved to position ({x}, {y})",
+            "yaw": desired_yaw,
+            "pitch": desired_pitch
+        })
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": str(e)
+        })
 
 class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
@@ -1112,6 +678,56 @@ class CameraTracker:
         raw_delta = angle_delta * raw_per_degree
         return int(raw_delta)
 
+    def move_to_pixel(self, target_x, target_y):
+        """
+        Directly move servos to point the crosshair at a target pixel position.
+        Unlike observe(), this is NOT a PID controller - it's a direct positioning command.
+
+        Args:
+            target_x: X coordinate of target position in pixels
+            target_y: Y coordinate of target position in pixels
+
+        Returns:
+            tuple: (desired_yaw, desired_pitch) servo positions in raw units
+        """
+        # Calculate pixel offset from current crosshair to target
+        pixel_offset_x = target_x - TARGET_CROSSHAIR_X
+        pixel_offset_y = target_y - TARGET_CROSSHAIR_Y
+
+        # Convert pixel offsets to angular offsets (degrees)
+        angle_offset_yaw = self.pixels_to_angle(
+            pixel_offset_x,
+            self.image_width,
+            self.camera_fov_horizontal
+        )
+        angle_offset_pitch = self.pixels_to_angle(
+            pixel_offset_y,
+            self.image_height,
+            self.camera_fov_vertical
+        )
+
+        # Convert angular offsets to servo raw units
+        # Note: Right arrow increases yaw (e.g., 2734 → 2739), so right click = increase yaw
+        yaw_offset_raw = self.angle_to_servo_raw(angle_offset_yaw, axis='yaw')
+        # Note: Pitch servo moves same as screen direction (down click = increase pitch)
+        pitch_offset_raw = self.angle_to_servo_raw(angle_offset_pitch, axis='pitch')
+
+        # Calculate desired servo positions
+        desired_yaw = self.current_yaw + yaw_offset_raw
+        desired_pitch = self.current_pitch + pitch_offset_raw
+
+        # Clamp to valid servo ranges
+        desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
+        desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
+
+        print(f"   Direct positioning:")
+        print(f"     Target pixel: ({target_x}, {target_y})")
+        print(f"     Pixel offset: X={pixel_offset_x:.1f}px, Y={pixel_offset_y:.1f}px")
+        print(f"     Angle offset: Yaw={angle_offset_yaw:.2f}°, Pitch={angle_offset_pitch:.2f}°")
+        print(f"     Servo move: Yaw {self.current_yaw} → {desired_yaw} ({yaw_offset_raw:+d}), Pitch {self.current_pitch} → {desired_pitch} ({pitch_offset_raw:+d})")
+
+        return desired_yaw, desired_pitch
+
     def observe(self, center_x, center_y):
         """
         PID controller that takes detected rat center point and returns updated servo coordinates.
@@ -1306,11 +922,13 @@ class CameraTracker:
 
                             # Save detection
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                            detection_path = f"detections/detection_{timestamp}.jpg"
+                            detection_filename = f"detection_{timestamp}.jpg"
+                            detection_path = f"detections/{detection_filename}"
                             shutil.copy2(temp_path, detection_path)
 
                             self.detection_count += 1
-                            detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {conf:.3f}) at ({center_x}, {center_y})"
+                            # Format: "time - message | filename" so the UI can parse and link it
+                            detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {conf:.3f}) at ({center_x}, {center_y}) | {detection_filename}"
                             self.recent_detections.append(detection_msg)
                             self.recent_detections = self.recent_detections[-10:]
 
