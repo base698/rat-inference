@@ -25,7 +25,7 @@ async function streamLoop() {
         fetching = true;
 
         // Fetch image bytes from stream-frame
-        const imageResponse = await fetch('/stream-frame');
+        const imageResponse = await fetch('/stream-frame',headers:{'Content-Type':'image/jpeg'});
         if (!imageResponse.ok) return;
 
         const imageBlob = await imageResponse.blob();
