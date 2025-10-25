@@ -1052,7 +1052,7 @@ def main():
                        help="Use CSI camera with GStreamer pipeline (Jetson)")
     parser.add_argument("--invert-camera", action="store_true",
                        help="Invert camera 180 degrees for upside-down mounting")
-    parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-10-23/weights/best.pt",
+    parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-10-24/weights/best.pt",
                        help="Path to YOLO model")
     parser.add_argument("--confidence", "-c", type=float, default=0.75,
                        help="Detection confidence threshold")
