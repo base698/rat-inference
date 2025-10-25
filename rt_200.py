@@ -9,7 +9,6 @@ import os
 import time
 import argparse
 import threading
-import base64
 import io
 import shutil
 from datetime import datetime
@@ -135,32 +134,47 @@ async def get_status():
             "yaw_position": "N/A",
             "pitch_position": "N/A",
             "camera_active": False,
-            "detection_count": 0
-        })
-
-    # Don't read positions on every status call - too frequent and causes bus errors
-    # Positions are read once on connection and updated when we write to motors
-    return JSONResponse({
-        "connected": tracker_instance.connected,
-        "yaw_position": tracker_instance.current_yaw,
-        "pitch_position": tracker_instance.current_pitch,
-        "camera_active": tracker_instance.camera_active,
-        "detection_count": tracker_instance.detection_count
-    })
-
-@app.get("/stream-frame")
-async def stream_frame():
-    """Get the latest camera frame with detection info"""
-    if not tracker_instance or not tracker_instance.camera_active:
-        return JSONResponse({
-            "image": None,
+            "detection_count": 0,
             "detection": False,
             "confidence": 0,
             "recent_detections": []
         })
 
-    frame_data = tracker_instance.get_latest_frame()
-    return JSONResponse(frame_data)
+    # Don't read positions on every status call - too frequent and causes bus errors
+    # Positions are read once on connection and updated when we write to motors
+    status_data = {
+        "connected": tracker_instance.connected,
+        "yaw_position": tracker_instance.current_yaw,
+        "pitch_position": tracker_instance.current_pitch,
+        "camera_active": tracker_instance.camera_active,
+        "detection_count": tracker_instance.detection_count
+    }
+
+    # Add detection data if camera is active
+    if tracker_instance.camera_active:
+        detection_data = tracker_instance.get_detection_data()
+        status_data.update(detection_data)
+    else:
+        status_data.update({
+            "detection": False,
+            "confidence": 0,
+            "recent_detections": []
+        })
+
+    return JSONResponse(status_data)
+
+@app.get("/stream-frame")
+async def stream_frame():
+    """Get the latest camera frame as bytes"""
+    if not tracker_instance or not tracker_instance.camera_active:
+        # Return empty JPEG if no camera
+        return Response(content=b'', media_type="image/jpeg")
+
+    frame_bytes = tracker_instance.get_latest_frame_bytes()
+    if frame_bytes is None:
+        return Response(content=b'', media_type="image/jpeg")
+
+    return Response(content=frame_bytes, media_type="image/jpeg")
 
 @app.post("/set-position")
 async def set_position(request: dict):
@@ -856,12 +870,12 @@ class CameraTracker:
             if not ret:
                 return
 
-            # Convert to base64 for streaming
-            img_str = base64.b64encode(buffer).decode()
+            # Store as bytes (no base64 encoding)
+            img_bytes = buffer.tobytes()
 
             # Update latest frame
             with self.frame_lock:
-                self.latest_frame = img_str
+                self.latest_frame = img_bytes
 
         except Exception as e:
             print(f"Video frame capture error: {e}")
@@ -961,11 +975,15 @@ class CameraTracker:
         except Exception as e:
             print(f"Inference error: {e}")
 
-    def get_latest_frame(self):
-        """Get the latest processed frame data"""
+    def get_latest_frame_bytes(self):
+        """Get the latest frame as bytes"""
         with self.frame_lock:
+            return self.latest_frame
+
+    def get_detection_data(self):
+        """Get the latest detection data without image"""
+        with self.inference_lock:
             return {
-                "image": self.latest_frame,
                 "detection": self.latest_detection,
                 "confidence": self.latest_confidence if hasattr(self, 'latest_confidence') else 0,
                 "recent_detections": self.recent_detections

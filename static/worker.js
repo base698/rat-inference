@@ -23,28 +23,36 @@ async function streamLoop() {
 
     try {
         fetching = true;
-        // Fetch frame data from server
-        const response = await fetch('/stream-frame');
-        if (!response.ok) return;
 
-        const data = await response.json();
+        // Fetch image bytes from stream-frame
+        const imageResponse = await fetch('/stream-frame');
+        if (!imageResponse.ok) return;
 
-        if (data.image) {
-            // Convert base64 to image and draw on canvas
-            const img = await createImageBitmap(await (await fetch(`data:image/jpeg;base64,${data.image}`)).blob());
+        const imageBlob = await imageResponse.blob();
+
+        // Only process if we have image data
+        if (imageBlob && imageBlob.size > 0) {
+            // Create ImageBitmap directly from blob
+            const img = await createImageBitmap(imageBlob);
 
             // Draw image on offscreen canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         }
 
-        // Send detection data back to main thread (without image)
-        self.postMessage({
-            type: 'frame_data',
-            detection: data.detection,
-            confidence: data.confidence,
-            recent_detections: data.recent_detections
-        });
+        // Fetch detection data from status endpoint
+        const statusResponse = await fetch('/status');
+        if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+
+            // Send detection data back to main thread (without image)
+            self.postMessage({
+                type: 'frame_data',
+                detection: statusData.detection || false,
+                confidence: statusData.confidence || 0,
+                recent_detections: statusData.recent_detections || []
+            });
+        }
 
     } catch (error) {
         console.error('Stream loop error:', error);
