@@ -1,38 +1,348 @@
-# rat-inference
+# Rat Inference System
 
-T1000 for rats.
+**T1000 for rats** - An AI-powered rat detection and tracking system using YOLO, with automated dataset generation and real-time servo tracking capabilities.
 
+## Features
 
-## Pi Setup
-`curl -LsSf https://astral.sh/uv/install.sh | sh`
+🎯 **YOLO Inference** - Fast rat detection using Ultralytics YOLO (v8/v11)
+📊 **Dataset Generation** - AI-powered dataset creation using Vertex AI Gemini
+🎥 **Real-time Tracking** - Camera-based tracking with servo control (Jetson Nano)
+🏋️ **Model Training** - Train custom YOLO models with configurable image sizes
+🔧 **Flexible Deployment** - Modular dependency groups for different use cases
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11
+- [uv](https://docs.astral.sh/uv/) package manager
+- Google Cloud credentials (for dataset generation)
+
+### Installation
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
+git clone <your-repo-url>
+cd rat-inference
+
+# Install dependencies based on your use case:
+
+# For dataset generation
+uv sync --extra dataset
+
+# For Jetson Nano deployment
+uv sync --extra jetson
+
+# For model training only
+uv sync
+```
+
+## Usage
+
+### 1. Dataset Generation
+
+Generate training images from reference photos using Vertex AI Gemini:
+
+```bash
+# Single prompt with validation
+uv run generate-dataset.py \
+  --reference ref.jpg \
+  --prompt "Make a rat appear facing right in the middle of screen" \
+  --dataset rat \
+  --validate
+
+# Multiple prompts from file
+uv run generate-dataset.py \
+  --reference ref.jpg \
+  --prompts-file sample-prompts.txt \
+  --dataset rat \
+  --count 10 \
+  --validate
+
+# Multiple custom prompts
+uv run generate-dataset.py \
+  --reference ref.jpg \
+  --prompt "Add a rat in the center" \
+  --prompt "Add a rat on the left side" \
+  --dataset rat \
+  --count 5
+```
+
+**Output:** Generated images are saved to `./datasets/{name}/unsorted/`
+
+**Validation:** When `--validate` is enabled, Gemini 2.5 Pro evaluates image realism before saving.
+
+### 2. Model Training
+
+Train a custom YOLO model with configurable image size:
+
+```bash
+# Train with default settings (640px)
+uv run python train.py --model-size n --epochs 100
+
+# Train with larger image size (1024px)
+uv run python train.py --model-size n --epochs 100 --imgsz 1024
+
+# Train with medium model
+uv run python train.py --model-size m --epochs 150 --batch 16 --imgsz 640
+```
+
+**Training Tips:**
+- Start with `imgsz=640` for faster training
+- Use larger sizes (800-1024) for better accuracy
+- Smaller models (n, s) train faster but may be less accurate
+- See `TRAINING_GUIDE.md` for detailed instructions
+
+### 3. Inference
+
+Run inference on images or videos:
+
+```bash
+# Single image with default size (640)
+uv run python inference.py --input image.jpg --model runs/best.pt --show
+
+# Video with larger inference size (1024)
+uv run python inference.py --input video.mp4 --model runs/best.pt --imgsz 1024 --save
+
+# Custom confidence threshold
+uv run python inference.py --input image.jpg --model runs/best.pt --conf 0.5 --imgsz 640
+```
+
+**Parameters:**
+- `--imgsz`: Inference image size in pixels (default: 640)
+- `--conf`: Confidence threshold (default: 0.25)
+- `--show`: Display results
+- `--save`: Save annotated output
+
+### 4. Real-time Tracking (Jetson Nano)
+
+Run the real-time camera tracker with servo control:
+
+```bash
+# With camera and detection (default 640px)
+uv run python rt_200.py \
+  --enable-camera \
+  --use-csi \
+  --enable-trigger \
+  --confidence 0.75
+
+# With larger inference size (1024px) - slower but more accurate
+uv run python rt_200.py \
+  --enable-camera \
+  --use-csi \
+  --enable-trigger \
+  --imgsz 1024 \
+  --confidence 0.75
+
+# Web interface only (no servos)
+uv run python rt_200.py --no-connect --enable-camera --use-csi
+```
+
+**Access web interface:** `http://localhost:8000`
+
+**Performance Notes:**
+- `imgsz=640`: ~7 FPS on Jetson Nano (default)
+- `imgsz=1024`: ~2-4 FPS on Jetson Nano (more accurate)
+- Start with 640 and test higher sizes based on your needs
+
+## Project Structure
 
 ```
+rat-inference/
+├── yolo_inference.py          # Shared inference module (NEW!)
+├── generate-dataset.py        # AI dataset generation (REFACTORED!)
+├── train.py                   # Model training
+├── inference.py               # Image/video inference
+├── rt_200.py                  # Real-time tracking (Jetson)
+├── rt_100.py                  # Legacy tracking
+├── main.py                    # Legacy Roboflow inference
+├── sample-prompts.txt         # Example prompts for generation
+├── datasets/                  # Training datasets
+│   └── rat/
+│       ├── images/            # Training images
+│       ├── labels/            # YOLO labels
+│       └── unsorted/          # Generated images
+├── runs/                      # Training outputs
+│   └── yolo11n-2025-10-24/
+│       └── weights/
+│           └── best.pt        # Trained model
+└── pyproject.toml            # Dependencies with groups
+
+Key Files:
+- DEPENDENCIES.md - Detailed dependency management guide
+- TRAINING_GUIDE.md - Model training instructions
+```
+
+## Dependency Management
+
+This project uses **optional dependency groups** to avoid conflicts:
+
+### Available Groups
+
+| Group | Packages | Use For |
+|-------|----------|---------|
+| **core** (default) | ultralytics, opencv, numpy | Training, inference |
+| **dataset** | google-cloud-aiplatform | Dataset generation |
+| **jetson** | lerobot, servos, fastapi | Jetson deployment |
+| **optimize** | ncnn, onnx | Model optimization |
+| **all** | All non-conflicting deps | Combined development |
+
+### Installation Examples
+
+```bash
+# Dataset generation workflow
+uv sync --extra dataset
+
+# Jetson deployment
+uv sync --extra jetson
+
+# Combined: dataset + optimization
+uv sync --extra dataset --extra optimize
+
+# Everything
+uv sync --extra all
+```
+
+**Important:** `main.py` (Roboflow inference) conflicts with `lerobot` and must be run in a separate venv.
+
+See `DEPENDENCIES.md` for complete details.
+
+## Image Size Configuration
+
+All inference and training scripts now support the `--imgsz` parameter:
+
+```bash
+# Training
+python train.py --imgsz 640   # Default
+python train.py --imgsz 1024  # Higher accuracy (requires retraining)
+
+# Inference
+python inference.py --imgsz 640   # Default
+python inference.py --imgsz 1024  # Larger inference size
+
+# Real-time tracking
+python rt_200.py --imgsz 640   # Default, ~7 FPS on Jetson
+python rt_200.py --imgsz 1024  # Higher accuracy, ~2-4 FPS on Jetson
+```
+
+**Notes:**
+- Models trained at 640px can run inference at different sizes (e.g., 1024px)
+- For best accuracy at 1024px, retrain the model with `--imgsz 1024`
+- Larger sizes increase GPU memory usage and reduce FPS
+
+## Jetson Nano Setup
+
+### Prerequisites
+
+```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install system packages
 sudo apt update
 sudo apt install -y python3.11 python3.11-venv python3-libcamera libcamera-apps
-sudo usermod -aG video $USER   # then log out/in once or reboot
+sudo usermod -aG video $USER   # Log out/in after this
 ```
 
+### Setup Virtual Environment
 
-```
+```bash
 cd ~/rat-inference
-deactivate 2>/dev/null || true
-rm -rf .venv
 uv venv -p /usr/bin/python3.11 --system-site-packages
 source .venv/bin/activate
-python -V    # should show 3.11.x
 ```
 
+### Install Dependencies
 
-```
-uv pip install -U pip wheel setuptools
-uv pip install picamera2 ultralytics
+```bash
+# For Jetson deployment (includes servo control)
+uv sync --extra jetson
+
+# Verify installation
+python -c "import libcamera; print('libcamera OK')"
+python -c "from ultralytics import YOLO; print('YOLO OK')"
+python -c "from lerobot.motors.feetech import FeetechMotorsBus; print('Servos OK')"
 ```
 
-```
-python -c "import libcamera; print('libcamera OK:', libcamera.__file__)"
-python -c "from picamera2 import Picamera2; print('picamera2 OK')"
-python -c "import ultralytics, torch; print('ultralytics OK, torch', torch.__version__)"
+### Running
+
+```bash
+# Start the tracking system
+uv run python rt_200.py \
+  --port /dev/ttyACM0 \
+  --enable-camera \
+  --use-csi \
+  --enable-trigger \
+  --model runs/yolo11n-2025-10-24/weights/best.pt \
+  --confidence 0.75 \
+  --imgsz 640
+
+# Access web interface at http://<jetson-ip>:8000
 ```
 
-## Running
-`python rt_100.py`
+## Model Performance
+
+### Jetson Nano 8GB
+
+| Image Size | FPS | Accuracy | Use Case |
+|------------|-----|----------|----------|
+| 640px | ~7 | Good | Real-time tracking |
+| 800px | ~4-5 | Better | Balanced |
+| 1024px | ~2-4 | Best | High accuracy |
+
+**Recommendation:** Start with 640px. Test 1024px if you need higher accuracy and can accept lower FPS.
+
+## Configuration Files
+
+- **pyproject.toml** - Dependencies and project metadata
+- **datasets/rat/rat_dataset.yaml** - Dataset configuration for training
+- **runs/*/args.yaml** - Training run configuration
+
+## Troubleshooting
+
+### Dependency Conflicts
+
+```bash
+# Clear lock file and reinstall
+rm uv.lock
+uv sync --extra dataset
+```
+
+### Check Installed Packages
+
+```bash
+uv pip list
+```
+
+### Vertex AI Authentication
+
+```bash
+# Option 1: gcloud CLI (development)
+gcloud auth application-default login
+gcloud config set project YOUR_PROJECT_ID
+
+# Option 2: Service account (production)
+export GOOGLE_APPLICATION_CREDENTIALS='/path/to/key.json'
+export GCP_PROJECT_ID='your-project-id'
+export GCP_LOCATION='us-central1'
+```
+
+## Contributing
+
+Contributions welcome! Please ensure:
+- Code follows existing patterns (use shared `yolo_inference.py`)
+- New dependencies go in appropriate optional group
+- Update documentation for new features
+
+## License
+
+[Your License]
+
+## Acknowledgments
+
+- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) - Object detection
+- [LeRobot](https://github.com/huggingface/lerobot) - Servo control
+- [Google Vertex AI](https://cloud.google.com/vertex-ai) - Dataset generation

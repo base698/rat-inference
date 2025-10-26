@@ -1,20 +1,49 @@
 [project]
 name = "inference-test"
 version = "0.1.0"
-description = "Add your description here"
+description = "Rat detection system with YOLO inference and dataset generation"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
+
+# Core dependencies - always installed
 dependencies = [
     "pillow>=10.0.0",
     "ultralytics>=8.3.179",
     "numpy",
     "opencv-python",
-    "inference>=0.35.0,<0.51",
     "supervision",
+]
+
+[project.optional-dependencies]
+# For Jetson Nano deployment with servo control (rt_200.py)
+jetson = [
     "fastapi>=0.110.3",
     "uvicorn",
     "lerobot>=0.3.0",
     "feetech-servo-sdk>=1.0.0",
+]
+
+# For dataset generation with Vertex AI (generate-dataset.py)
+dataset = [
+    "google-cloud-aiplatform>=1.122.0",
+]
+
+# For model optimization and export
+optimize = [
     "ncnn>=1.0.20250916",
     "onnx>=1.19.0",
 ]
+
+# All optional dependencies combined
+all = [
+    "fastapi>=0.110.3",
+    "uvicorn",
+    "lerobot>=0.3.0",
+    "feetech-servo-sdk>=1.0.0",
+    "google-cloud-aiplatform>=1.122.0",
+    "ncnn>=1.0.20250916",
+    "onnx>=1.19.0",
+]
+
+# Note: main.py uses Roboflow's 'inference' package which conflicts with lerobot.
+# If you need to run main.py, create a separate venv and install inference package there.

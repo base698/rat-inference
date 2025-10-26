@@ -175,7 +175,7 @@ scan_motors() {
         --runtime=nvidia \
         --device=/dev/ttyACM0:/dev/ttyACM0 \
         $IMAGE_NAME \
-        python3 motor_scan.py "$@"
+        python3 find_motors.py "$@"
 }
 
 # Open a shell in the container

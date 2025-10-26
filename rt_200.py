@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from typing import Dict
 import uvicorn
 import numpy as np
+from yolo_inference import run_inference as yolo_run_inference, extract_detections
 
 # Set library path for macOS
 os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
@@ -281,7 +282,7 @@ class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
-                 use_csi=False, invert_camera=False):
+                 use_csi=False, invert_camera=False, imgsz=640):
         """
         Initialize the camera tracker
 
@@ -296,6 +297,7 @@ class CameraTracker:
             camera_id: Camera device ID (0 for USB, varies for CSI)
             use_csi: Use CSI camera with GStreamer pipeline (Jetson)
             invert_camera: Invert camera 180 degrees for upside-down mounting (default: False)
+            imgsz: Inference image size in pixels (default: 640)
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -313,6 +315,7 @@ class CameraTracker:
         self.model = None
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
+        self.imgsz = imgsz
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
@@ -881,7 +884,7 @@ class CameraTracker:
             print(f"Video frame capture error: {e}")
 
     def run_inference(self):
-        """Run inference at 15 FPS"""
+        """Run inference at 7 FPS using shared inference module"""
         if not self.camera_active or not self.camera or not self.model:
             return
 
@@ -900,66 +903,59 @@ class CameraTracker:
             if frame.shape[1] != 640 or frame.shape[0] != 480:
                 frame = cv2.resize(frame, (640, 480))
 
-            # Save temporary file for inference
-            temp_path = "temp_inference.jpg"
-            cv2.imwrite(temp_path, frame)
+            # Run inference using shared inference module (YOLO works directly with numpy arrays)
+            results = yolo_run_inference(
+                self.model,
+                frame,
+                conf=self.confidence_threshold,
+                imgsz=self.imgsz,
+                verbose=False
+            )
 
-            # Run inference (YOLO can work directly with numpy arrays or file paths)
-            results = self.model(temp_path, conf=self.confidence_threshold, verbose=False)
+            # Extract detections using shared utility (filter for 'rat' class)
+            detections = extract_detections(results, self.model, target_class='rat')
 
-            # Process detections
+            # Process first detection (if any)
             detection = False
             confidence = 0
             bbox = None
             center_point = None
 
-            for r in results:
-                if r.boxes is not None and len(r.boxes) > 0:
-                    for box in r.boxes:
-                        cls = int(box.cls)
-                        conf = float(box.conf)
-                        class_name = self.model.names[cls] if cls < len(self.model.names) else f"Class_{cls}"
+            if detections:
+                # Use the first (highest confidence) detection
+                det = detections[0]
+                detection = True
+                confidence = det['confidence']
+                bbox = det['bbox']
+                center_point = det['center']
+                center_x, center_y = center_point
 
-                        # Check if it's a rat
-                        if 'rat' in class_name.lower() or cls == 0:
-                            detection = True
-                            confidence = max(confidence, conf)
+                # Save detection image
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                detection_filename = f"detection_{timestamp}.jpg"
+                detection_path = f"detections/{detection_filename}"
+                cv2.imwrite(detection_path, frame)
 
-                            # Get bounding box coordinates
-                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                            bbox = (int(x1), int(y1), int(x2), int(y2))
+                self.detection_count += 1
+                # Format: "time - message | filename" so the UI can parse and link it
+                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {confidence:.3f}) at ({center_x}, {center_y}) | {detection_filename}"
+                self.recent_detections.append(detection_msg)
+                self.recent_detections = self.recent_detections[-10:]
 
-                            # Calculate center point
-                            center_x = int((x1 + x2) / 2)
-                            center_y = int((y1 + y2) / 2)
-                            center_point = (center_x, center_y)
+                print(f"🐀 Detection #{self.detection_count}: {detection_path}")
+                print(f"   Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
 
-                            # Save detection
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                            detection_filename = f"detection_{timestamp}.jpg"
-                            detection_path = f"detections/{detection_filename}"
-                            shutil.copy2(temp_path, detection_path)
+                # Get updated servo positions from observe function
+                desired_yaw, desired_pitch = self.observe(center_x, center_y)
+                print(f"   Servo update: Yaw {self.current_yaw} -> {desired_yaw}, Pitch {self.current_pitch} -> {desired_pitch}")
 
-                            self.detection_count += 1
-                            # Format: "time - message | filename" so the UI can parse and link it
-                            detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {conf:.3f}) at ({center_x}, {center_y}) | {detection_filename}"
-                            self.recent_detections.append(detection_msg)
-                            self.recent_detections = self.recent_detections[-10:]
+                # Update servo positions
+                self.set_yaw(desired_yaw)
+                self.set_pitch(desired_pitch)
 
-                            print(f"🐀 Detection #{self.detection_count}: {detection_path}")
-                            print(f"   Center: ({center_x}, {center_y}), Confidence: {conf:.3f}")
-
-                            # Get updated servo positions from observe function
-                            desired_yaw, desired_pitch = self.observe(center_x, center_y)
-                            print(f"   Servo update: Yaw {self.current_yaw} -> {desired_yaw}, Pitch {self.current_pitch} -> {desired_pitch}")
-
-                            # Update servo positions
-                            self.set_yaw(desired_yaw)
-                            self.set_pitch(desired_pitch)
-
-                            # Auto-trigger disabled - only trigger manually via button
-                            # if detection and not self.latest_detection and self.trigger_servo_enabled:
-                            #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
+                # Auto-trigger disabled - only trigger manually via button
+                # if detection and not self.latest_detection and self.trigger_servo_enabled:
+                #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
 
             # Update detection state
             with self.inference_lock:
@@ -967,10 +963,6 @@ class CameraTracker:
                 self.latest_confidence = confidence
                 self.latest_bbox = bbox
                 self.latest_center_point = center_point
-
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
         except Exception as e:
             print(f"Inference error: {e}")
@@ -1074,6 +1066,8 @@ def main():
                        help="Path to YOLO model")
     parser.add_argument("--confidence", "-c", type=float, default=0.75,
                        help="Detection confidence threshold")
+    parser.add_argument("--imgsz", type=int, default=640,
+                       help="Inference image size in pixels (default: 640)")
 
     # Trigger servo settings
     parser.add_argument("--enable-trigger", action="store_true",
@@ -1099,7 +1093,8 @@ def main():
         confidence_threshold=args.confidence,
         camera_id=args.camera_id,
         use_csi=args.use_csi,
-        invert_camera=args.invert_camera
+        invert_camera=args.invert_camera,
+        imgsz=args.imgsz
     )
     tracker_instance = tracker
 
@@ -1117,6 +1112,7 @@ def main():
     if args.enable_camera and args.model:
         print(f"Model: {args.model}")
         print(f"Confidence threshold: {args.confidence}")
+        print(f"Inference image size: {args.imgsz}px")
     print()
 
     # Start API server in a separate thread

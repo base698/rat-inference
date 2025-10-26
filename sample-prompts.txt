@@ -1,0 +1,13 @@
+# Sample prompts for generate-dataset.py
+# One prompt per line. Lines starting with # are ignored.
+
+Make a rat appear facing right in the middle of the screen
+Make a rat appear at the center of the picture
+Add a rat facing left on the left side of the image
+Place a rat in the bottom right corner
+Add a rat sitting at the top of the image
+Make a rat appear in the foreground facing the camera
+Add a small rat in the upper left area
+Place a rat running across the middle of the scene
+Make a rat appear partially visible on the right edge
+Add a rat climbing near the center

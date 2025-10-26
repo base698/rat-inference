@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import numpy as np
 import supervision as sv
+from yolo_inference import run_inference as yolo_run_inference
 
 def run_inference(args):
     """
@@ -38,8 +39,9 @@ def process_image(model, args):
     """
     Process a single image
     """
-    # Run inference
-    results = model(
+    # Run inference using shared inference module
+    results = yolo_run_inference(
+        model,
         args.input,
         conf=args.conf,
         iou=args.iou,
@@ -48,6 +50,7 @@ def process_image(model, args):
         agnostic_nms=args.agnostic_nms,
         max_det=args.max_det,
         classes=args.classes,
+        verbose=False
     )
     
     # Process results
@@ -178,8 +181,9 @@ def process_video(model, args):
         if args.skip_frames > 0 and frame_count % (args.skip_frames + 1) != 0:
             continue
         
-        # Run inference
-        results = model(
+        # Run inference using shared inference module
+        results = yolo_run_inference(
+            model,
             frame,
             conf=args.conf,
             iou=args.iou,

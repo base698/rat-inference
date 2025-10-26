@@ -3,29 +3,30 @@ FROM ultralytics/ultralytics:latest-jetson-jetpack6
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y vim busybox && rm -rf /var/lib/apt/lists/*
+# Install system dependencies including curl for uv installation
+RUN apt-get update && apt-get install -y vim busybox curl && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install uv package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
 # Install Jetson.GPIO with older setuptools to avoid compatibility issues
 RUN python3 -m pip install --upgrade pip && \
     pip install "setuptools==69.5.1" && \
     pip install Jetson.GPIO && \
-    pip install "setuptools<75.0.0" && \
-    pip install \
-        "numpy<2" \
-        pillow>=10.0.0 \
-        ultralytics>=8.3.179 \
-        opencv-python \
-        supervision \
-        fastapi>=0.110.3 \
-        uvicorn \
-        lerobot
+    pip install "setuptools<75.0.0"
 
-# Install Feetech servo SDK separately (to avoid reinstalling lerobot on changes)
-RUN pip install feetech-servo-sdk
-# Copy project files (after pip install so code changes don't invalidate pip cache)
+# Copy dependency files first (for better Docker cache usage)
 COPY pyproject.toml ./
+
+# Install Python dependencies using uv with jetson extras
+# This installs: ultralytics, opencv, supervision, fastapi, uvicorn, lerobot, feetech-servo-sdk
+RUN uv pip install --system --extra jetson -e .
+
+# Copy shared inference module (required by inference.py and rt_200.py)
+COPY yolo_inference.py ./
+
+# Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY inference.py ./
 COPY rt_200.py ./
 COPY test_camera.py ./
@@ -33,6 +34,7 @@ COPY csi_camera_capture.py ./
 COPY servo_test_sysfs.py ./
 COPY trigger_position_test.py ./
 COPY pitch_test.py ./
+COPY find_motors.py ./
 
 # Copy model files
 COPY *.pt ./
@@ -51,4 +53,4 @@ EXPOSE 8000
 
 # Default command runs the rt_200.py server
 # Users can override this to run inference.py instead
-CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--model", "runs/yolo11n-2025-10-24/weights/best.pt"]
+CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--model", "runs/yolo11n-2025-10-24/weights/best.pt", "--imgsz", "640"]
