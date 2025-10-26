@@ -14,8 +14,8 @@ from lerobot.motors.motors_bus import Motor, MotorNormMode
 PITCH_MOTOR_ID = 5
 PITCH_MIN = 0
 PITCH_MAX = 600
-PORT = "/dev/ttyACM0"
-#PORT = "/dev/cu.usbmodem5A680116511"
+#PORT = "/dev/ttyACM0"
+PORT = "/dev/cu.usbmodem5A680116511"
 
 def main():
     # Parse command line

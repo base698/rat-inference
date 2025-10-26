@@ -330,19 +330,3 @@ export GCP_PROJECT_ID='your-project-id'
 export GCP_LOCATION='us-central1'
 ```
 
-## Contributing
-
-Contributions welcome! Please ensure:
-- Code follows existing patterns (use shared `yolo_inference.py`)
-- New dependencies go in appropriate optional group
-- Update documentation for new features
-
-## License
-
-[Your License]
-
-## Acknowledgments
-
-- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) - Object detection
-- [LeRobot](https://github.com/huggingface/lerobot) - Servo control
-- [Google Vertex AI](https://cloud.google.com/vertex-ai) - Dataset generation
