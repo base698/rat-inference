@@ -19,17 +19,17 @@ RUN python3 -m pip install --upgrade pip && \
 # Copy dependency files first (for better Docker cache usage)
 COPY pyproject.toml ./
 
-# Install Python dependencies using uv with jetson extras
-# This installs: ultralytics, opencv, supervision, fastapi, uvicorn, lerobot, feetech-servo-sdk
-# Note: We install the dependencies directly (not editable mode) since this is Docker
-RUN uv pip install --system \
-    pillow>=10.0.0 \
-    ultralytics>=8.3.179 \
-    numpy \
-    opencv-python \
-    supervision \
+# Install ONLY the additional dependencies we need for Jetson deployment
+# DO NOT reinstall ultralytics, pytorch, opencv, numpy - they come with the base image!
+# The base image (ultralytics/ultralytics:latest-jetson-jetpack6) already has:
+#   - PyTorch with CUDA support for Jetson
+#   - Ultralytics YOLO
+#   - OpenCV, numpy, pillow
+# We only add: fastapi, uvicorn, lerobot, feetech-servo-sdk, supervision
+RUN pip install \
     fastapi>=0.110.3 \
     uvicorn \
+    supervision \
     lerobot>=0.3.0 \
     feetech-servo-sdk>=1.0.0
 

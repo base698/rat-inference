@@ -91,7 +91,7 @@ TRIGGER_NEUTRAL_ANGLE = 99  # Neutral position in degrees (rest/safe position)
 TRIGGER_ACTION_ANGLE = 38   # Trigger position in degrees (activated trap)
 
 # Tracking configuration
-TARGET_CROSSHAIR_X = 291  # Center X position for target
+TARGET_CROSSHAIR_X = 298  # Center X position for target
 TARGET_CROSSHAIR_Y = 199  # Center Y position for target
 CROSSHAIR_SIZE = 20       # Size of crosshair in pixels
 VIDEO_FPS = 30            # Video display frame rate
