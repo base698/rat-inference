@@ -21,7 +21,17 @@ COPY pyproject.toml ./
 
 # Install Python dependencies using uv with jetson extras
 # This installs: ultralytics, opencv, supervision, fastapi, uvicorn, lerobot, feetech-servo-sdk
-RUN uv pip install --system --extra jetson -e .
+# Note: We install the dependencies directly (not editable mode) since this is Docker
+RUN uv pip install --system \
+    pillow>=10.0.0 \
+    ultralytics>=8.3.179 \
+    numpy \
+    opencv-python \
+    supervision \
+    fastapi>=0.110.3 \
+    uvicorn \
+    lerobot>=0.3.0 \
+    feetech-servo-sdk>=1.0.0
 
 # Copy shared inference module (required by inference.py and rt_200.py)
 COPY yolo_inference.py ./
