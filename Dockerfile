@@ -20,19 +20,13 @@ RUN python3 -m pip install --upgrade pip && \
         supervision \
         fastapi>=0.110.3 \
         uvicorn \
-        lerobot \
-        pyyaml
+        lerobot
 
 # Install Feetech servo SDK separately (to avoid reinstalling lerobot on changes)
 RUN pip install feetech-servo-sdk
-
-# Copy configuration file
-COPY config.yaml ./
-
-# Copy shared inference module (required by inference.py and rt_200.py)
-COPY yolo_inference.py ./
-
 # Copy project files (after pip install so code changes don't invalidate pip cache)
+COPY config.yaml ./
+COPY yolo_inference.py ./
 COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
@@ -41,7 +35,6 @@ COPY csi_camera_capture.py ./
 COPY servo_test_sysfs.py ./
 COPY trigger_position_test.py ./
 COPY pitch_test.py ./
-COPY find_motors.py ./
 
 # Copy model files
 COPY *.pt ./
@@ -60,4 +53,4 @@ EXPOSE 8000
 
 # Default command runs the rt_200.py server
 # Users can override this to run inference.py instead
-CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--model", "runs/yolo11n-2025-10-24/weights/best.pt", "--imgsz", "640"]
+CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--model", "runs/yolo11n-2025-10-24/weights/best.pt"]
