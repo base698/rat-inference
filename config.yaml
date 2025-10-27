@@ -22,14 +22,23 @@ servos:
     pwm_chip: 0
     pwm_channel: 0
     neutral_angle: 99   # Rest/safe position in degrees
-    action_angle: 38    # Activated trap position in degrees
+    action_angle: 34    # Activated trap position in degrees
 
 # Camera and Tracking Configuration
 tracking:
-  # Base crosshair position (when pitch is at minimum/level)
+  # Base crosshair position
   crosshair:
-    x: 300           # Center X position (horizontal)
+    x_base: 300      # Base X position at yaw center (2200)
     y_base: 199      # Base Y position when pitch is at minimum (100)
+
+  # Yaw compensation - adjusts crosshair X based on yaw angle
+  # As yaw increases (camera pans right), crosshair X position changes
+  yaw_compensation:
+    enabled: true
+    yaw_min: 1600          # Minimum yaw value
+    yaw_max: 3100          # Maximum yaw value
+    x_offset_at_min: 67.0  # X offset when yaw = yaw_min (adjust right by 67px)
+    x_offset_at_max: -100.6 # X offset when yaw = yaw_max (adjust left by 100.6px)
 
   # Pitch compensation - adjusts crosshair Y based on pitch angle
   # As pitch increases (camera tilts down), crosshair Y position changes
