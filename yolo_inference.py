@@ -14,7 +14,7 @@ def run_inference(
     conf: float = 0.25,
     iou: float = 0.45,
     imgsz: int = 640,
-    device: str = "0",
+    device: Optional[str] = None,
     agnostic_nms: bool = False,
     max_det: int = 300,
     classes: Optional[List[int]] = None,
@@ -29,7 +29,7 @@ def run_inference(
         conf: Confidence threshold (default: 0.25)
         iou: IoU threshold for NMS (default: 0.45)
         imgsz: Inference image size in pixels (default: 640)
-        device: Device to use - '0' for GPU, 'cpu' for CPU (default: '0')
+        device: Device to use - '0' for GPU, 'cpu' for CPU, None for auto-detect (default: None)
         agnostic_nms: Class-agnostic NMS (default: False)
         max_det: Maximum number of detections per image (default: 300)
         classes: Filter by class indices, e.g., [0, 1, 2] (default: None)
@@ -40,25 +40,33 @@ def run_inference(
 
     Examples:
         >>> model = YOLO('yolo11n.pt')
-        >>> # Inference on image file
+        >>> # Inference on image file (auto-detect device)
         >>> results = run_inference(model, 'image.jpg', conf=0.5, imgsz=640)
         >>>
         >>> # Inference on numpy array (frame from camera)
         >>> import cv2
         >>> frame = cv2.imread('image.jpg')
         >>> results = run_inference(model, frame, conf=0.75, imgsz=1024)
+        >>>
+        >>> # Force CPU usage
+        >>> results = run_inference(model, frame, device='cpu')
     """
-    return model(
-        source,
-        conf=conf,
-        iou=iou,
-        imgsz=imgsz,
-        device=device,
-        agnostic_nms=agnostic_nms,
-        max_det=max_det,
-        classes=classes,
-        verbose=verbose
-    )
+    # Build kwargs, only include device if explicitly specified
+    kwargs = {
+        'conf': conf,
+        'iou': iou,
+        'imgsz': imgsz,
+        'agnostic_nms': agnostic_nms,
+        'max_det': max_det,
+        'classes': classes,
+        'verbose': verbose
+    }
+
+    # Only pass device if explicitly specified, otherwise let YOLO auto-detect
+    if device is not None:
+        kwargs['device'] = device
+
+    return model(source, **kwargs)
 
 
 def extract_detections(results, model, target_class: Optional[str] = None):
