@@ -28,7 +28,7 @@ servos:
 tracking:
   # Base crosshair position (when pitch is at minimum/level)
   crosshair:
-    x: 298           # Center X position (horizontal)
+    x: 300           # Center X position (horizontal)
     y_base: 199      # Base Y position when pitch is at minimum (100)
 
   # Pitch compensation - adjusts crosshair Y based on pitch angle
@@ -37,8 +37,8 @@ tracking:
     enabled: true
     pitch_min: 100         # Pitch value with no Y adjustment
     pitch_max: 550         # Pitch value with maximum Y adjustment
-    y_offset_at_min: 30    # Y offset when pitch = pitch_min (adjust down by 30px)
-    y_offset_at_max: -30   # Y offset when pitch = pitch_max (adjust up by 30px)
+    y_offset_at_min: -20.8 # Y offset when pitch = pitch_min (adjust up by 20.8px)
+    y_offset_at_max: 44.2  # Y offset when pitch = pitch_max (adjust down by 44.2px)
 
   crosshair_size: 20   # Size of crosshair in pixels
 
