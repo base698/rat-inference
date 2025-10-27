@@ -37,8 +37,8 @@ tracking:
     enabled: true
     pitch_min: 100         # Pitch value with no Y adjustment
     pitch_max: 550         # Pitch value with maximum Y adjustment
-    y_offset_at_min: 0     # Y offset when pitch = pitch_min (no adjustment)
-    y_offset_at_max: -60  # Y offset when pitch = pitch_max (adjust up by 120px)
+    y_offset_at_min: 30    # Y offset when pitch = pitch_min (adjust down by 30px)
+    y_offset_at_max: -30   # Y offset when pitch = pitch_max (adjust up by 30px)
 
   crosshair_size: 20   # Size of crosshair in pixels
 
