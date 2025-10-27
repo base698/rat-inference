@@ -121,11 +121,17 @@ else:
 
 # Tracking configuration (with config fallback)
 if CONFIG and 'tracking' in CONFIG:
-    TARGET_CROSSHAIR_X = CONFIG['tracking']['crosshair']['x']
+    TARGET_CROSSHAIR_X_BASE = CONFIG['tracking']['crosshair']['x_base']
     TARGET_CROSSHAIR_Y_BASE = CONFIG['tracking']['crosshair']['y_base']
     CROSSHAIR_SIZE = CONFIG['tracking']['crosshair_size']
     VIDEO_FPS = CONFIG['tracking']['video_fps']
     INFERENCE_FPS = CONFIG['tracking']['inference_fps']
+    # Yaw compensation settings
+    YAW_COMPENSATION_ENABLED = CONFIG['tracking']['yaw_compensation']['enabled']
+    YAW_COMP_MIN = CONFIG['tracking']['yaw_compensation']['yaw_min']
+    YAW_COMP_MAX = CONFIG['tracking']['yaw_compensation']['yaw_max']
+    X_OFFSET_AT_MIN = CONFIG['tracking']['yaw_compensation']['x_offset_at_min']
+    X_OFFSET_AT_MAX = CONFIG['tracking']['yaw_compensation']['x_offset_at_max']
     # Pitch compensation settings
     PITCH_COMPENSATION_ENABLED = CONFIG['tracking']['pitch_compensation']['enabled']
     PITCH_COMP_MIN = CONFIG['tracking']['pitch_compensation']['pitch_min']
@@ -134,16 +140,58 @@ if CONFIG and 'tracking' in CONFIG:
     Y_OFFSET_AT_MAX = CONFIG['tracking']['pitch_compensation']['y_offset_at_max']
 else:
     # Default values (fallback)
-    TARGET_CROSSHAIR_X = 298
+    TARGET_CROSSHAIR_X_BASE = 298
     TARGET_CROSSHAIR_Y_BASE = 199
     CROSSHAIR_SIZE = 20
     VIDEO_FPS = 30
     INFERENCE_FPS = 7
+    YAW_COMPENSATION_ENABLED = False
+    YAW_COMP_MIN = 1600
+    YAW_COMP_MAX = 3100
+    X_OFFSET_AT_MIN = 0
+    X_OFFSET_AT_MAX = 0
     PITCH_COMPENSATION_ENABLED = False
     PITCH_COMP_MIN = 100
     PITCH_COMP_MAX = 550
     Y_OFFSET_AT_MIN = 0
     Y_OFFSET_AT_MAX = -120
+
+
+def get_target_crosshair_x(current_yaw):
+    """
+    Calculate the target crosshair X position based on current yaw.
+
+    As the yaw servo pans the camera (yaw changes), the same real-world point
+    appears at different horizontal positions in the image. This function compensates
+    for that by adjusting the target crosshair X position.
+
+    Args:
+        current_yaw: Current yaw servo position (raw value)
+
+    Returns:
+        int: Adjusted X position for the target crosshair
+    """
+    if not YAW_COMPENSATION_ENABLED:
+        return int(TARGET_CROSSHAIR_X_BASE)
+
+    # Clamp yaw to valid range
+    yaw = max(YAW_COMP_MIN, min(YAW_COMP_MAX, current_yaw))
+
+    # Linear interpolation between min and max yaw
+    # t = 0.0 at YAW_COMP_MIN, t = 1.0 at YAW_COMP_MAX
+    yaw_range = YAW_COMP_MAX - YAW_COMP_MIN
+    if yaw_range == 0:
+        t = 0.0
+    else:
+        t = (yaw - YAW_COMP_MIN) / yaw_range
+
+    # Interpolate X offset
+    x_offset = X_OFFSET_AT_MIN + t * (X_OFFSET_AT_MAX - X_OFFSET_AT_MIN)
+
+    # Calculate adjusted X position
+    adjusted_x = TARGET_CROSSHAIR_X_BASE + x_offset
+
+    return int(adjusted_x)
 
 
 def get_target_crosshair_y(current_pitch):
@@ -193,11 +241,13 @@ async def get_config():
     if tracker_instance and tracker_instance.connected:
         initial_yaw = tracker_instance.current_yaw
         initial_pitch = tracker_instance.current_pitch
-        # Calculate dynamic crosshair Y based on current pitch
+        # Calculate dynamic crosshair positions based on current servo angles
+        target_x = get_target_crosshair_x(initial_yaw)
         target_y = get_target_crosshair_y(initial_pitch)
     else:
         initial_yaw = YAW_CENTER
         initial_pitch = PITCH_CENTER
+        target_x = get_target_crosshair_x(initial_yaw)
         target_y = get_target_crosshair_y(initial_pitch)
 
     return JSONResponse({
@@ -207,7 +257,7 @@ async def get_config():
         "PITCH_MIN": PITCH_MIN,
         "PITCH_MAX": PITCH_MAX,
         "PITCH_CENTER": PITCH_CENTER,
-        "TARGET_CROSSHAIR_X": TARGET_CROSSHAIR_X,
+        "TARGET_CROSSHAIR_X": target_x,
         "TARGET_CROSSHAIR_Y": target_y,
         "initial_yaw": initial_yaw,
         "initial_pitch": initial_pitch,
@@ -714,8 +764,8 @@ class CameraTracker:
 
     def draw_overlays(self, frame):
         """Draw crosshair, bounding box, and center point on image (OpenCV)"""
-        # Draw target crosshair (dynamic position based on pitch)
-        ch_x = TARGET_CROSSHAIR_X
+        # Draw target crosshair (dynamic position based on yaw and pitch)
+        ch_x = get_target_crosshair_x(self.current_yaw)
         ch_y = get_target_crosshair_y(self.current_pitch)
         ch_size = CROSSHAIR_SIZE
 
@@ -797,9 +847,10 @@ class CameraTracker:
             tuple: (desired_yaw, desired_pitch) servo positions in raw units
         """
         # Calculate pixel offset from current crosshair to target
-        # Use dynamic crosshair Y based on current pitch
+        # Use dynamic crosshair positions based on current servo angles
+        target_crosshair_x = get_target_crosshair_x(self.current_yaw)
         target_crosshair_y = get_target_crosshair_y(self.current_pitch)
-        pixel_offset_x = target_x - TARGET_CROSSHAIR_X
+        pixel_offset_x = target_x - target_crosshair_x
         pixel_offset_y = target_y - target_crosshair_y
 
         # Convert pixel offsets to angular offsets (degrees)
@@ -864,11 +915,12 @@ class CameraTracker:
             dt = 0.001
 
         # Calculate pixel error from target crosshair
-        # Use dynamic crosshair Y based on current pitch
+        # Use dynamic crosshair positions based on current servo angles
         # Positive error_x means rat is to the right
         # Positive error_y means rat is below center
+        target_crosshair_x = get_target_crosshair_x(self.current_yaw)
         target_crosshair_y = get_target_crosshair_y(self.current_pitch)
-        pixel_error_x = center_x - TARGET_CROSSHAIR_X
+        pixel_error_x = center_x - target_crosshair_x
         pixel_error_y = center_y - target_crosshair_y
 
         # Convert pixel errors to angular errors (degrees)
