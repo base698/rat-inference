@@ -1,0 +1,85 @@
+# RT-200 Camera Tracker Configuration
+# This file contains calibration values for the tracking system
+
+# Servo Configuration
+servos:
+  # Yaw motor (horizontal pan)
+  yaw:
+    motor_id: 1
+    min: 1600      # Minimum yaw position (raw)
+    max: 3100      # Maximum yaw position (raw)
+    center: 2200   # Center position for yaw
+
+  # Pitch motor (vertical tilt)
+  pitch:
+    motor_id: 5
+    min: 0         # Minimum pitch position (level, raw)
+    max: 500       # Maximum pitch position (~55 degrees down, raw)
+    center: 250    # Start at level position
+
+  # Trigger servo (PWM)
+  trigger:
+    pwm_chip: 0
+    pwm_channel: 0
+    neutral_angle: 99   # Rest/safe position in degrees
+    action_angle: 38    # Activated trap position in degrees
+
+# Camera and Tracking Configuration
+tracking:
+  # Base crosshair position (when pitch is at minimum/level)
+  crosshair:
+    x: 298           # Center X position (horizontal)
+    y_base: 199      # Base Y position when pitch is at minimum (100)
+
+  # Pitch compensation - adjusts crosshair Y based on pitch angle
+  # As pitch increases (camera tilts down), crosshair Y position changes
+  pitch_compensation:
+    enabled: true
+    pitch_min: 100         # Pitch value with no Y adjustment
+    pitch_max: 550         # Pitch value with maximum Y adjustment
+    y_offset_at_min: 0     # Y offset when pitch = pitch_min (no adjustment)
+    y_offset_at_max: -120  # Y offset when pitch = pitch_max (adjust up by 120px)
+
+  crosshair_size: 20   # Size of crosshair in pixels
+
+  # Frame rates
+  video_fps: 30        # Video display frame rate
+  inference_fps: 7     # Inference frame rate
+
+# Camera FOV calibration (used for pixel-to-angle conversion)
+camera:
+  fov_horizontal: 60.0   # Horizontal field of view in degrees
+  fov_vertical: 45.0     # Vertical field of view in degrees
+  width: 640             # Image width in pixels
+  height: 480            # Image height in pixels
+
+# PID Controller Gains
+pid:
+  yaw:
+    kp: 0.3    # Proportional gain
+    ki: 0.01   # Integral gain
+    kd: 0.1    # Derivative gain
+
+  pitch:
+    kp: 0.3    # Proportional gain
+    ki: 0.01   # Integral gain
+    kd: 0.1    # Derivative gain
+
+  max_integral: 10.0   # Anti-windup limit in degrees
+
+# Detection Configuration
+detection:
+  confidence_threshold: 0.75
+  imgsz: 640
+  model_path: "runs/yolo11n-2025-10-24/weights/best.pt"
+
+# Notes:
+# - pitch_compensation adjusts the target crosshair Y position based on current pitch
+# - Negative y_offset means the crosshair moves UP in the image
+# - This compensates for the camera tilting down as pitch increases
+# - Calibrate these values by:
+#   1. Set pitch to minimum (100)
+#   2. Note where center of image points in real world
+#   3. Set pitch to maximum (550)
+#   4. Measure how many pixels up the same real-world point appears
+#   5. Set y_offset_at_max to that negative value

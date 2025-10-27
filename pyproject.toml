@@ -12,6 +12,7 @@ dependencies = [
     "numpy",
     "opencv-python",
     "supervision",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]

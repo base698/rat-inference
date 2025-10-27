@@ -11,6 +11,7 @@ import argparse
 import threading
 import io
 import shutil
+import yaml
 from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, Response, HTTPException
@@ -73,29 +74,113 @@ os.makedirs("static", exist_ok=True)
 # Mount static files directory for serving JS, CSS, and other assets
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Servo configuration for tracking servos
-YAW_MOTOR_ID = 1
-PITCH_MOTOR_ID = 5
-YAW_MIN = 1600  # Minimum yaw position (raw)
-YAW_MAX = 3100  # Maximum yaw position (raw)
-YAW_CENTER = 2200  # Center position for yaw
-PITCH_MIN = 0    # Minimum pitch position (level, raw)
-PITCH_MAX = 500  # Maximum pitch position (~55 degrees down, raw)
-PITCH_CENTER = 250 # Start at level position
+# Load configuration from YAML file
+def load_config(config_path="config.yaml"):
+    """Load configuration from YAML file with fallback to defaults"""
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"Warning: {config_path} not found, using default configuration")
+        return None
+    except Exception as e:
+        print(f"Warning: Error loading {config_path}: {e}, using default configuration")
+        return None
 
-# PWM servo configuration (trigger servo)
-# Using sysfs hardware PWM - Pin 15 (GPIO12) = PWM Chip 0
-TRIGGER_PWM_CHIP = 0  # PWM chip 0 (confirmed working)
-TRIGGER_PWM_CHANNEL = 0
-TRIGGER_NEUTRAL_ANGLE = 99  # Neutral position in degrees (rest/safe position)
-TRIGGER_ACTION_ANGLE = 38   # Trigger position in degrees (activated trap)
+# Load config (with fallback to hardcoded defaults)
+CONFIG = load_config()
 
-# Tracking configuration
-TARGET_CROSSHAIR_X = 298  # Center X position for target
-TARGET_CROSSHAIR_Y = 199  # Center Y position for target
-CROSSHAIR_SIZE = 20       # Size of crosshair in pixels
-VIDEO_FPS = 30            # Video display frame rate
-INFERENCE_FPS = 7         # Inference frame rate
+# Servo configuration for tracking servos (with config fallback)
+if CONFIG and 'servos' in CONFIG:
+    YAW_MOTOR_ID = CONFIG['servos']['yaw']['motor_id']
+    PITCH_MOTOR_ID = CONFIG['servos']['pitch']['motor_id']
+    YAW_MIN = CONFIG['servos']['yaw']['min']
+    YAW_MAX = CONFIG['servos']['yaw']['max']
+    YAW_CENTER = CONFIG['servos']['yaw']['center']
+    PITCH_MIN = CONFIG['servos']['pitch']['min']
+    PITCH_MAX = CONFIG['servos']['pitch']['max']
+    PITCH_CENTER = CONFIG['servos']['pitch']['center']
+    TRIGGER_PWM_CHIP = CONFIG['servos']['trigger']['pwm_chip']
+    TRIGGER_PWM_CHANNEL = CONFIG['servos']['trigger']['pwm_channel']
+    TRIGGER_NEUTRAL_ANGLE = CONFIG['servos']['trigger']['neutral_angle']
+    TRIGGER_ACTION_ANGLE = CONFIG['servos']['trigger']['action_angle']
+else:
+    # Default values (fallback)
+    YAW_MOTOR_ID = 1
+    PITCH_MOTOR_ID = 5
+    YAW_MIN = 1600
+    YAW_MAX = 3100
+    YAW_CENTER = 2200
+    PITCH_MIN = 0
+    PITCH_MAX = 500
+    PITCH_CENTER = 250
+    TRIGGER_PWM_CHIP = 0
+    TRIGGER_PWM_CHANNEL = 0
+    TRIGGER_NEUTRAL_ANGLE = 99
+    TRIGGER_ACTION_ANGLE = 38
+
+# Tracking configuration (with config fallback)
+if CONFIG and 'tracking' in CONFIG:
+    TARGET_CROSSHAIR_X = CONFIG['tracking']['crosshair']['x']
+    TARGET_CROSSHAIR_Y_BASE = CONFIG['tracking']['crosshair']['y_base']
+    CROSSHAIR_SIZE = CONFIG['tracking']['crosshair_size']
+    VIDEO_FPS = CONFIG['tracking']['video_fps']
+    INFERENCE_FPS = CONFIG['tracking']['inference_fps']
+    # Pitch compensation settings
+    PITCH_COMPENSATION_ENABLED = CONFIG['tracking']['pitch_compensation']['enabled']
+    PITCH_COMP_MIN = CONFIG['tracking']['pitch_compensation']['pitch_min']
+    PITCH_COMP_MAX = CONFIG['tracking']['pitch_compensation']['pitch_max']
+    Y_OFFSET_AT_MIN = CONFIG['tracking']['pitch_compensation']['y_offset_at_min']
+    Y_OFFSET_AT_MAX = CONFIG['tracking']['pitch_compensation']['y_offset_at_max']
+else:
+    # Default values (fallback)
+    TARGET_CROSSHAIR_X = 298
+    TARGET_CROSSHAIR_Y_BASE = 199
+    CROSSHAIR_SIZE = 20
+    VIDEO_FPS = 30
+    INFERENCE_FPS = 7
+    PITCH_COMPENSATION_ENABLED = False
+    PITCH_COMP_MIN = 100
+    PITCH_COMP_MAX = 550
+    Y_OFFSET_AT_MIN = 0
+    Y_OFFSET_AT_MAX = -120
+
+
+def get_target_crosshair_y(current_pitch):
+    """
+    Calculate the target crosshair Y position based on current pitch.
+
+    As the pitch servo tilts the camera down (pitch increases), the same real-world
+    point appears higher in the image. This function compensates for that by adjusting
+    the target crosshair Y position.
+
+    Args:
+        current_pitch: Current pitch servo position (raw value)
+
+    Returns:
+        int: Adjusted Y position for the target crosshair
+    """
+    if not PITCH_COMPENSATION_ENABLED:
+        return int(TARGET_CROSSHAIR_Y_BASE)
+
+    # Clamp pitch to valid range
+    pitch = max(PITCH_COMP_MIN, min(PITCH_COMP_MAX, current_pitch))
+
+    # Linear interpolation between min and max pitch
+    # t = 0.0 at PITCH_COMP_MIN, t = 1.0 at PITCH_COMP_MAX
+    pitch_range = PITCH_COMP_MAX - PITCH_COMP_MIN
+    if pitch_range == 0:
+        t = 0.0
+    else:
+        t = (pitch - PITCH_COMP_MIN) / pitch_range
+
+    # Interpolate Y offset
+    y_offset = Y_OFFSET_AT_MIN + t * (Y_OFFSET_AT_MAX - Y_OFFSET_AT_MIN)
+
+    # Calculate adjusted Y position
+    adjusted_y = TARGET_CROSSHAIR_Y_BASE + y_offset
+
+    return int(adjusted_y)
 
 @app.get("/")
 async def root():
@@ -108,9 +193,12 @@ async def get_config():
     if tracker_instance and tracker_instance.connected:
         initial_yaw = tracker_instance.current_yaw
         initial_pitch = tracker_instance.current_pitch
+        # Calculate dynamic crosshair Y based on current pitch
+        target_y = get_target_crosshair_y(initial_pitch)
     else:
         initial_yaw = YAW_CENTER
         initial_pitch = PITCH_CENTER
+        target_y = get_target_crosshair_y(initial_pitch)
 
     return JSONResponse({
         "YAW_MIN": YAW_MIN,
@@ -120,7 +208,7 @@ async def get_config():
         "PITCH_MAX": PITCH_MAX,
         "PITCH_CENTER": PITCH_CENTER,
         "TARGET_CROSSHAIR_X": TARGET_CROSSHAIR_X,
-        "TARGET_CROSSHAIR_Y": TARGET_CROSSHAIR_Y,
+        "TARGET_CROSSHAIR_Y": target_y,
         "initial_yaw": initial_yaw,
         "initial_pitch": initial_pitch,
         "enable_trigger": tracker_instance.trigger_servo_enabled if tracker_instance else False
@@ -626,8 +714,9 @@ class CameraTracker:
 
     def draw_overlays(self, frame):
         """Draw crosshair, bounding box, and center point on image (OpenCV)"""
-        # Draw target crosshair (fixed position)
-        ch_x, ch_y = TARGET_CROSSHAIR_X, TARGET_CROSSHAIR_Y
+        # Draw target crosshair (dynamic position based on pitch)
+        ch_x = TARGET_CROSSHAIR_X
+        ch_y = get_target_crosshair_y(self.current_pitch)
         ch_size = CROSSHAIR_SIZE
 
         # Crosshair lines in green (BGR format)
@@ -708,8 +797,10 @@ class CameraTracker:
             tuple: (desired_yaw, desired_pitch) servo positions in raw units
         """
         # Calculate pixel offset from current crosshair to target
+        # Use dynamic crosshair Y based on current pitch
+        target_crosshair_y = get_target_crosshair_y(self.current_pitch)
         pixel_offset_x = target_x - TARGET_CROSSHAIR_X
-        pixel_offset_y = target_y - TARGET_CROSSHAIR_Y
+        pixel_offset_y = target_y - target_crosshair_y
 
         # Convert pixel offsets to angular offsets (degrees)
         angle_offset_yaw = self.pixels_to_angle(
@@ -773,10 +864,12 @@ class CameraTracker:
             dt = 0.001
 
         # Calculate pixel error from target crosshair
+        # Use dynamic crosshair Y based on current pitch
         # Positive error_x means rat is to the right
         # Positive error_y means rat is below center
+        target_crosshair_y = get_target_crosshair_y(self.current_pitch)
         pixel_error_x = center_x - TARGET_CROSSHAIR_X
-        pixel_error_y = center_y - TARGET_CROSSHAIR_Y
+        pixel_error_y = center_y - target_crosshair_y
 
         # Convert pixel errors to angular errors (degrees)
         angle_error_yaw = self.pixels_to_angle(

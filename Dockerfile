@@ -25,13 +25,17 @@ COPY pyproject.toml ./
 #   - PyTorch with CUDA support for Jetson
 #   - Ultralytics YOLO
 #   - OpenCV, numpy, pillow
-# We only add: fastapi, uvicorn, lerobot, feetech-servo-sdk, supervision
+# We only add: fastapi, uvicorn, lerobot, feetech-servo-sdk, supervision, pyyaml
 RUN pip install \
     fastapi>=0.110.3 \
     uvicorn \
     supervision \
     lerobot>=0.3.0 \
-    feetech-servo-sdk>=1.0.0
+    feetech-servo-sdk>=1.0.0 \
+    pyyaml
+
+# Copy configuration file
+COPY config.yaml ./
 
 # Copy shared inference module (required by inference.py and rt_200.py)
 COPY yolo_inference.py ./
