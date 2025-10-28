@@ -435,7 +435,7 @@ class WebCalibrationCapture:
 
         if frame is None:
             # Return blank frame
-            frame = cv2.zeros((480, 640, 3), dtype=np.uint8)
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(frame, "No frame", (200, 240),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
