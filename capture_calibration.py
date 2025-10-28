@@ -19,8 +19,10 @@ from pathlib import Path
 try:
     from csi_camera_capture import CSICameraCapture
     CSI_HELPER_AVAILABLE = True
-except ImportError:
+    print("✓ CSICameraCapture module loaded")
+except ImportError as e:
     CSI_HELPER_AVAILABLE = False
+    print(f"⚠ CSICameraCapture not available: {e}")
 
 # Optional FastAPI for web server mode
 try:
@@ -256,19 +258,27 @@ class WebCalibrationCapture:
     def _open_cameras(self):
         """Open camera(s)"""
         if self.use_csi:
+            print(f"Opening CSI camera (CSI_HELPER_AVAILABLE={CSI_HELPER_AVAILABLE})...")
             # Use CSI camera helper (subprocess+GStreamer)
             if CSI_HELPER_AVAILABLE:
-                self.cap = CSICameraCapture(
-                    sensor_id=0,
-                    width=640,
-                    height=480,
-                    fps=30,
-                    flip_method=0
-                )
-                self.cap.start()
-                print("✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ 30 FPS)")
-            else:
+                try:
+                    self.cap = CSICameraCapture(
+                        sensor_id=0,
+                        width=640,
+                        height=480,
+                        fps=30,
+                        flip_method=0
+                    )
+                    self.cap.start()
+                    print("✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ 30 FPS)")
+                except Exception as e:
+                    print(f"✗ Failed to initialize CSICameraCapture: {e}")
+                    print("Falling back to cv2.VideoCapture...")
+                    CSI_HELPER_AVAILABLE = False  # Force fallback for second camera too
+
+            if not CSI_HELPER_AVAILABLE:
                 # Fallback to cv2.VideoCapture with GStreamer
+                print("Using cv2.VideoCapture with GStreamer pipeline...")
                 gst_pipeline = (
                     "nvarguscamerasrc sensor-id=0 ! "
                     "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
@@ -279,7 +289,10 @@ class WebCalibrationCapture:
                     "video/x-raw, format=(string)BGR ! appsink"
                 )
                 self.cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-                print("✓ CSI Camera initialized with cv2.VideoCapture+GStreamer")
+                if self.cap.isOpened():
+                    print("✓ CSI Camera initialized with cv2.VideoCapture+GStreamer")
+                else:
+                    print("✗ Failed to open CSI camera with cv2.VideoCapture")
 
             if self.stereo_mode:
                 if CSI_HELPER_AVAILABLE:
