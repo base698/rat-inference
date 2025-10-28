@@ -15,6 +15,13 @@ import io
 from datetime import datetime
 from pathlib import Path
 
+# Try importing CSI camera helper
+try:
+    from csi_camera_capture import CSICameraCapture
+    CSI_HELPER_AVAILABLE = True
+except ImportError:
+    CSI_HELPER_AVAILABLE = False
+
 # Optional FastAPI for web server mode
 try:
     from fastapi import FastAPI, Response
@@ -43,21 +50,48 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
     # Open camera(s)
     if use_csi:
         print("Opening CSI camera...")
-        gst_pipeline = (
-            "nvarguscamerasrc sensor-id=0 ! "
-            "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
-            "format=(string)NV12, framerate=(fraction)30/1 ! "
-            "nvvidconv flip-method=0 ! "
-            "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
-            "videoconvert ! "
-            "video/x-raw, format=(string)BGR ! appsink"
-        )
-        cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        # Use CSI camera helper (subprocess+GStreamer)
+        if CSI_HELPER_AVAILABLE:
+            cap = CSICameraCapture(
+                sensor_id=0,
+                width=640,
+                height=480,
+                fps=30,
+                flip_method=0
+            )
+            cap.start()
+            print("✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ 30 FPS)")
+        else:
+            # Fallback to cv2.VideoCapture with GStreamer
+            gst_pipeline = (
+                "nvarguscamerasrc sensor-id=0 ! "
+                "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
+                "format=(string)NV12, framerate=(fraction)30/1 ! "
+                "nvvidconv flip-method=0 ! "
+                "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
+                "videoconvert ! "
+                "video/x-raw, format=(string)BGR ! appsink"
+            )
+            cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+            print("✓ CSI Camera initialized with cv2.VideoCapture+GStreamer")
+
         cap2 = None
         if stereo_mode:
             print("Opening second CSI camera...")
-            gst_pipeline2 = gst_pipeline.replace("sensor-id=0", "sensor-id=1")
-            cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
+            if CSI_HELPER_AVAILABLE:
+                cap2 = CSICameraCapture(
+                    sensor_id=1,
+                    width=640,
+                    height=480,
+                    fps=30,
+                    flip_method=0
+                )
+                cap2.start()
+                print("✓ Second CSI Camera initialized with subprocess+GStreamer")
+            else:
+                gst_pipeline2 = gst_pipeline.replace("sensor-id=0", "sensor-id=1")
+                cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
+                print("✓ Second CSI Camera initialized with cv2.VideoCapture+GStreamer")
     else:
         print(f"Opening USB camera {camera_id}...")
         cap = cv2.VideoCapture(camera_id)
@@ -222,20 +256,46 @@ class WebCalibrationCapture:
     def _open_cameras(self):
         """Open camera(s)"""
         if self.use_csi:
-            gst_pipeline = (
-                "nvarguscamerasrc sensor-id=0 ! "
-                "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
-                "format=(string)NV12, framerate=(fraction)30/1 ! "
-                "nvvidconv flip-method=0 ! "
-                "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
-                "videoconvert ! "
-                "video/x-raw, format=(string)BGR ! appsink"
-            )
-            self.cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+            # Use CSI camera helper (subprocess+GStreamer)
+            if CSI_HELPER_AVAILABLE:
+                self.cap = CSICameraCapture(
+                    sensor_id=0,
+                    width=640,
+                    height=480,
+                    fps=30,
+                    flip_method=0
+                )
+                self.cap.start()
+                print("✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ 30 FPS)")
+            else:
+                # Fallback to cv2.VideoCapture with GStreamer
+                gst_pipeline = (
+                    "nvarguscamerasrc sensor-id=0 ! "
+                    "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
+                    "format=(string)NV12, framerate=(fraction)30/1 ! "
+                    "nvvidconv flip-method=0 ! "
+                    "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
+                    "videoconvert ! "
+                    "video/x-raw, format=(string)BGR ! appsink"
+                )
+                self.cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+                print("✓ CSI Camera initialized with cv2.VideoCapture+GStreamer")
 
             if self.stereo_mode:
-                gst_pipeline2 = gst_pipeline.replace("sensor-id=0", "sensor-id=1")
-                self.cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
+                if CSI_HELPER_AVAILABLE:
+                    self.cap2 = CSICameraCapture(
+                        sensor_id=1,
+                        width=640,
+                        height=480,
+                        fps=30,
+                        flip_method=0
+                    )
+                    self.cap2.start()
+                    print("✓ Second CSI Camera initialized with subprocess+GStreamer")
+                else:
+                    gst_pipeline2 = gst_pipeline.replace("sensor-id=0", "sensor-id=1")
+                    self.cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
+                    print("✓ Second CSI Camera initialized with cv2.VideoCapture+GStreamer")
         else:
             self.cap = cv2.VideoCapture(self.camera_id)
             # Set format to MJPEG if available (better compatibility, prevents green image)
