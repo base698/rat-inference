@@ -688,8 +688,10 @@ Examples:
                        help='Checkerboard pattern (default: 9x6 internal corners)')
     parser.add_argument('--count', '-n', type=int, default=30,
                        help='Number of images to capture (default: 30)')
-    parser.add_argument('--use-csi', action='store_true',
-                       help='Use CSI camera with GStreamer (Jetson)')
+    parser.add_argument('--use-csi', action='store_true', default=True,
+                       help='Use CSI camera with GStreamer (Jetson, default: True)')
+    parser.add_argument('--use-usb', action='store_true',
+                       help='Use USB camera instead of CSI')
     parser.add_argument('--stereo', action='store_true',
                        help='Capture from two cameras for stereo calibration')
     parser.add_argument('--web', action='store_true',
@@ -707,13 +709,16 @@ Examples:
 
     pattern_size = (int(pattern_parts[0]), int(pattern_parts[1]))
 
+    # Handle use-csi vs use-usb flags
+    use_csi = args.use_csi and not args.use_usb
+
     if args.web:
         # Web server mode
         start_web_server(
             camera_id=args.camera,
             output_dir=args.output,
             pattern_size=pattern_size,
-            use_csi=args.use_csi,
+            use_csi=use_csi,
             stereo_mode=args.stereo,
             port=args.port
         )
@@ -724,7 +729,7 @@ Examples:
             output_dir=args.output,
             pattern_size=pattern_size,
             num_images=args.count,
-            use_csi=args.use_csi,
+            use_csi=use_csi,
             stereo_mode=args.stereo
         )
 
