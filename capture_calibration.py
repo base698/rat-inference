@@ -259,8 +259,10 @@ class WebCalibrationCapture:
         """Open camera(s)"""
         if self.use_csi:
             print(f"Opening CSI camera (CSI_HELPER_AVAILABLE={CSI_HELPER_AVAILABLE})...")
+            use_csi_helper = CSI_HELPER_AVAILABLE
+
             # Use CSI camera helper (subprocess+GStreamer)
-            if CSI_HELPER_AVAILABLE:
+            if use_csi_helper:
                 try:
                     self.cap = CSICameraCapture(
                         sensor_id=0,
@@ -274,9 +276,9 @@ class WebCalibrationCapture:
                 except Exception as e:
                     print(f"✗ Failed to initialize CSICameraCapture: {e}")
                     print("Falling back to cv2.VideoCapture...")
-                    CSI_HELPER_AVAILABLE = False  # Force fallback for second camera too
+                    use_csi_helper = False  # Force fallback for second camera too
 
-            if not CSI_HELPER_AVAILABLE:
+            if not use_csi_helper:
                 # Fallback to cv2.VideoCapture with GStreamer
                 print("Using cv2.VideoCapture with GStreamer pipeline...")
                 gst_pipeline = (
@@ -295,20 +297,34 @@ class WebCalibrationCapture:
                     print("✗ Failed to open CSI camera with cv2.VideoCapture")
 
             if self.stereo_mode:
-                if CSI_HELPER_AVAILABLE:
-                    self.cap2 = CSICameraCapture(
-                        sensor_id=1,
-                        width=640,
-                        height=480,
-                        fps=30,
-                        flip_method=0
-                    )
-                    self.cap2.start()
-                    print("✓ Second CSI Camera initialized with subprocess+GStreamer")
+                if use_csi_helper:
+                    try:
+                        self.cap2 = CSICameraCapture(
+                            sensor_id=1,
+                            width=640,
+                            height=480,
+                            fps=30,
+                            flip_method=0
+                        )
+                        self.cap2.start()
+                        print("✓ Second CSI Camera initialized with subprocess+GStreamer")
+                    except Exception as e:
+                        print(f"✗ Failed to initialize second CSICameraCapture: {e}")
                 else:
-                    gst_pipeline2 = gst_pipeline.replace("sensor-id=0", "sensor-id=1")
+                    gst_pipeline2 = (
+                        "nvarguscamerasrc sensor-id=1 ! "
+                        "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
+                        "format=(string)NV12, framerate=(fraction)30/1 ! "
+                        "nvvidconv flip-method=0 ! "
+                        "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
+                        "videoconvert ! "
+                        "video/x-raw, format=(string)BGR ! appsink"
+                    )
                     self.cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
-                    print("✓ Second CSI Camera initialized with cv2.VideoCapture+GStreamer")
+                    if self.cap2.isOpened():
+                        print("✓ Second CSI Camera initialized with cv2.VideoCapture+GStreamer")
+                    else:
+                        print("✗ Failed to open second CSI camera")
         else:
             self.cap = cv2.VideoCapture(self.camera_id)
             # Set format to MJPEG if available (better compatibility, prevents green image)
