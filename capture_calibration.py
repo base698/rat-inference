@@ -343,6 +343,9 @@ class WebCalibrationCapture:
 
     def _capture_loop(self):
         """Capture frames and detect pattern (runs at ~5 FPS)"""
+        last_capture_time = 0
+        min_capture_interval = 1.0  # Minimum 1 second between auto-captures
+
         while self.running:
             ret, frame = self.cap.read()
             if not ret:
@@ -375,6 +378,40 @@ class WebCalibrationCapture:
                 if found2:
                     cv2.drawChessboardCorners(frame2, self.pattern_size, corners2, found2)
                 self._add_overlay(frame2, found2, "RIGHT")
+
+            # Auto-save when pattern detected (with rate limiting)
+            current_time = time.time()
+            if current_time - last_capture_time >= min_capture_interval:
+                should_save = False
+                if self.stereo_mode:
+                    should_save = found and found2
+                else:
+                    should_save = found
+
+                if should_save:
+                    # Save images without drawing overlays
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+                    if self.stereo_mode:
+                        left_path = f"{self.output_dir}/left/img_{self.captured_count:03d}_{timestamp}.jpg"
+                        right_path = f"{self.output_dir}/right/img_{self.captured_count:03d}_{timestamp}.jpg"
+                        # Save original frames without overlays
+                        ret_orig, frame_orig = self.cap.read()
+                        ret2_orig, frame2_orig = (self.cap2.read() if ret2 else (False, None))
+                        if ret_orig and ret2_orig:
+                            cv2.imwrite(left_path, frame_orig)
+                            cv2.imwrite(right_path, frame2_orig)
+                            print(f"[AUTO] Saved {self.captured_count}: {left_path} & {right_path}")
+                    else:
+                        filename = f"{self.output_dir}/img_{self.captured_count:03d}_{timestamp}.jpg"
+                        # Save original frame without overlays
+                        ret_orig, frame_orig = self.cap.read()
+                        if ret_orig:
+                            cv2.imwrite(filename, frame_orig)
+                            print(f"[AUTO] Saved {self.captured_count}: {filename}")
+
+                    self.captured_count += 1
+                    last_capture_time = current_time
 
             # Update state
             with self.lock:
