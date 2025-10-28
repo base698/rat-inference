@@ -536,6 +536,12 @@ class CameraTracker:
     def load_calibration(self):
         """Load camera calibration from file"""
         try:
+            # Check if file exists
+            if not os.path.exists(self.calibration_file):
+                print(f"⚠ Calibration file not found: {self.calibration_file}")
+                self.calibration_enabled = False
+                return
+
             calib_data = np.load(self.calibration_file)
             self.camera_matrix = calib_data['camera_matrix']
             self.dist_coeffs = calib_data['dist_coeffs']
@@ -1257,8 +1263,8 @@ def main():
                        help="Detection confidence threshold")
     parser.add_argument("--imgsz", type=int, default=640,
                        help="Inference image size in pixels (default: 640)")
-    parser.add_argument("--calibration", type=str, default=None,
-                       help="Path to camera calibration file (.npz)")
+    parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
+                       help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
 
     # Trigger servo settings
     parser.add_argument("--enable-trigger", action="store_true",
@@ -1305,9 +1311,12 @@ def main():
         print(f"Model: {args.model}")
         print(f"Confidence threshold: {args.confidence}")
         print(f"Inference image size: {args.imgsz}px")
-    if args.calibration:
-        calib_status = "ENABLED" if tracker.calibration_enabled else "FAILED"
+    calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
+    if tracker.calibration_enabled:
         print(f"Calibration: {calib_status} ({args.calibration})")
+    elif args.calibration != "camera_calibration.npz":
+        # Only show warning if user explicitly specified a file
+        print(f"Calibration: {calib_status} (file not found)")
     print()
 
     # Start API server in a separate thread

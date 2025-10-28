@@ -27,6 +27,7 @@ RUN pip install feetech-servo-sdk
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY config.yaml ./
 COPY yolo_inference.py ./
+COPY calibration_output/camera_calibration.npz ./
 COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
