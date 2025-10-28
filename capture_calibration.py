@@ -6,6 +6,7 @@ Web server mode available for viewing camera feed in browser
 """
 
 import cv2
+import numpy as np
 import os
 import argparse
 import time
@@ -44,9 +45,12 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
         print("Opening CSI camera...")
         gst_pipeline = (
             "nvarguscamerasrc sensor-id=0 ! "
-            "video/x-raw(memory:NVMM), width=640, height=480, format=NV12, framerate=30/1 ! "
-            "nvvidconv ! video/x-raw, format=BGRx ! "
-            "videoconvert ! video/x-raw, format=BGR ! appsink"
+            "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
+            "format=(string)NV12, framerate=(fraction)30/1 ! "
+            "nvvidconv flip-method=0 ! "
+            "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
+            "videoconvert ! "
+            "video/x-raw, format=(string)BGR ! appsink"
         )
         cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
         cap2 = None
@@ -61,6 +65,7 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
         cap2 = None
         if stereo_mode:
             print(f"Opening second USB camera {camera_id + 1}...")
@@ -69,6 +74,7 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
             cap2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             cap2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap2.set(cv2.CAP_PROP_FPS, 30)
 
     if not cap.isOpened():
         print("ERROR: Could not open camera")
@@ -218,9 +224,12 @@ class WebCalibrationCapture:
         if self.use_csi:
             gst_pipeline = (
                 "nvarguscamerasrc sensor-id=0 ! "
-                "video/x-raw(memory:NVMM), width=640, height=480, format=NV12, framerate=30/1 ! "
-                "nvvidconv ! video/x-raw, format=BGRx ! "
-                "videoconvert ! video/x-raw, format=BGR ! appsink"
+                "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
+                "format=(string)NV12, framerate=(fraction)30/1 ! "
+                "nvvidconv flip-method=0 ! "
+                "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
+                "videoconvert ! "
+                "video/x-raw, format=(string)BGR ! appsink"
             )
             self.cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
 
@@ -233,6 +242,7 @@ class WebCalibrationCapture:
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
 
             if self.stereo_mode:
                 self.cap2 = cv2.VideoCapture(self.camera_id + 1)
@@ -240,6 +250,7 @@ class WebCalibrationCapture:
                 self.cap2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.cap2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 self.cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.cap2.set(cv2.CAP_PROP_FPS, 30)
 
     def _capture_loop(self):
         """Capture frames and detect pattern (runs at ~5 FPS)"""
