@@ -420,7 +420,8 @@ class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
-                 use_csi=False, invert_camera=False, imgsz=640):
+                 use_csi=False, invert_camera=False, imgsz=640,
+                 calibration_file=None):
         """
         Initialize the camera tracker
 
@@ -436,6 +437,7 @@ class CameraTracker:
             use_csi: Use CSI camera with GStreamer pipeline (Jetson)
             invert_camera: Invert camera 180 degrees for upside-down mounting (default: False)
             imgsz: Inference image size in pixels (default: 640)
+            calibration_file: Path to camera calibration file (.npz)
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -462,6 +464,14 @@ class CameraTracker:
         self.recent_detections = []
         self.frame_lock = threading.Lock()
         self.inference_lock = threading.Lock()
+
+        # Camera calibration
+        self.calibration_file = calibration_file
+        self.camera_matrix = None
+        self.dist_coeffs = None
+        self.calibration_enabled = False
+        if self.calibration_file:
+            self.load_calibration()
 
         # Trigger servo (uses sysfs PWM, doesn't need GPIO library)
         self.trigger_servo_enabled = enable_trigger
@@ -522,6 +532,32 @@ class CameraTracker:
             self.start_camera_thread()
             if self.model:
                 self.start_inference_thread()
+
+    def load_calibration(self):
+        """Load camera calibration from file"""
+        try:
+            calib_data = np.load(self.calibration_file)
+            self.camera_matrix = calib_data['camera_matrix']
+            self.dist_coeffs = calib_data['dist_coeffs']
+            self.calibration_enabled = True
+            rms_error = calib_data.get('rms_error', 0)
+            print(f"✓ Camera calibration loaded: {self.calibration_file}")
+            print(f"  RMS error: {rms_error:.3f} pixels")
+            print(f"  Focal length: fx={self.camera_matrix[0,0]:.2f}, fy={self.camera_matrix[1,1]:.2f}")
+        except Exception as e:
+            print(f"⚠ Failed to load calibration: {e}")
+            self.calibration_enabled = False
+
+    def undistort_frame(self, frame):
+        """Apply camera calibration to undistort frame"""
+        if not self.calibration_enabled:
+            return frame
+
+        try:
+            return cv2.undistort(frame, self.camera_matrix, self.dist_coeffs)
+        except Exception as e:
+            print(f"Error undistorting frame: {e}")
+            return frame
 
     def init_trigger_servo(self):
         """Initialize PWM trigger servo using sysfs"""
@@ -1010,6 +1046,10 @@ class CameraTracker:
             if frame.shape[1] != 640 or frame.shape[0] != 480:
                 frame = cv2.resize(frame, (640, 480))
 
+            # Apply calibration (undistort)
+            if self.calibration_enabled:
+                frame = self.undistort_frame(frame)
+
             # Draw overlays
             frame = self.draw_overlays(frame)
 
@@ -1047,6 +1087,10 @@ class CameraTracker:
             # Resize to 640x480 if needed (camera may not respect resolution settings)
             if frame.shape[1] != 640 or frame.shape[0] != 480:
                 frame = cv2.resize(frame, (640, 480))
+
+            # Apply calibration (undistort) before inference
+            if self.calibration_enabled:
+                frame = self.undistort_frame(frame)
 
             # Run inference using shared inference module (YOLO works directly with numpy arrays)
             results = yolo_run_inference(
@@ -1213,6 +1257,8 @@ def main():
                        help="Detection confidence threshold")
     parser.add_argument("--imgsz", type=int, default=640,
                        help="Inference image size in pixels (default: 640)")
+    parser.add_argument("--calibration", type=str, default=None,
+                       help="Path to camera calibration file (.npz)")
 
     # Trigger servo settings
     parser.add_argument("--enable-trigger", action="store_true",
@@ -1239,7 +1285,8 @@ def main():
         camera_id=args.camera_id,
         use_csi=args.use_csi,
         invert_camera=args.invert_camera,
-        imgsz=args.imgsz
+        imgsz=args.imgsz,
+        calibration_file=args.calibration
     )
     tracker_instance = tracker
 
@@ -1258,6 +1305,9 @@ def main():
         print(f"Model: {args.model}")
         print(f"Confidence threshold: {args.confidence}")
         print(f"Inference image size: {args.imgsz}px")
+    if args.calibration:
+        calib_status = "ENABLED" if tracker.calibration_enabled else "FAILED"
+        print(f"Calibration: {calib_status} ({args.calibration})")
     print()
 
     # Start API server in a separate thread
