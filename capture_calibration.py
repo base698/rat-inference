@@ -57,12 +57,16 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
     else:
         print(f"Opening USB camera {camera_id}...")
         cap = cv2.VideoCapture(camera_id)
+        # Set format to MJPEG if available (better compatibility, prevents green image)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap2 = None
         if stereo_mode:
             print(f"Opening second USB camera {camera_id + 1}...")
             cap2 = cv2.VideoCapture(camera_id + 1)
+            # Set format to MJPEG if available (better compatibility, prevents green image)
+            cap2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             cap2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -225,11 +229,15 @@ class WebCalibrationCapture:
                 self.cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
         else:
             self.cap = cv2.VideoCapture(self.camera_id)
+            # Set format to MJPEG if available (better compatibility, prevents green image)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
             if self.stereo_mode:
                 self.cap2 = cv2.VideoCapture(self.camera_id + 1)
+                # Set format to MJPEG if available (better compatibility, prevents green image)
+                self.cap2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.cap2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 self.cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
