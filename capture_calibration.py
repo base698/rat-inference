@@ -354,6 +354,8 @@ class WebCalibrationCapture:
             # Convert to grayscale and find pattern
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             found, corners = cv2.findChessboardCorners(gray, self.pattern_size,
+                                                       cv2.CALIB_CB_ADAPTIVE_THRESH +
+                                                       cv2.CALIB_CB_NORMALIZE_IMAGE +
                                                        cv2.CALIB_CB_FAST_CHECK)
 
             # Draw pattern if found
@@ -367,6 +369,8 @@ class WebCalibrationCapture:
             if self.stereo_mode and ret2:
                 gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
                 found2, corners2 = cv2.findChessboardCorners(gray2, self.pattern_size,
+                                                             cv2.CALIB_CB_ADAPTIVE_THRESH +
+                                                             cv2.CALIB_CB_NORMALIZE_IMAGE +
                                                              cv2.CALIB_CB_FAST_CHECK)
                 if found2:
                     cv2.drawChessboardCorners(frame2, self.pattern_size, corners2, found2)
