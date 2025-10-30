@@ -13,7 +13,6 @@ usage() {
     echo "  build          - Build the Docker image"
     echo "  rt200          - Run rt_200.py server (default, with web UI on port 8000)"
     echo "  inference      - Run inference.py for testing"
-    echo "  test-cam       - Test camera and save test image"
     echo "  servo-test     - Test servo using hardware PWM (sysfs)"
     echo "  trigger-test   - Interactive trigger servo position test (type numbers, 'q' to quit)"
     echo "  pitch-test     - Test pitch motor (read/write position)"
@@ -114,19 +113,6 @@ run_inference() {
             "${ARGS[@]}"
 }
 
-# Test camera
-test_camera() {
-    echo "Testing camera..."
-    docker run -it --rm \
-        --privileged \
-        --ipc=host \
-        --runtime=nvidia \
-        -v /tmp/argus_socket:/tmp/argus_socket \
-        -v $(pwd):/app/data \
-        --group-add video \
-        $IMAGE_NAME \
-        python3 test_camera.py
-}
 
 # Test servo (sysfs hardware PWM method)
 test_servo() {
@@ -205,9 +191,6 @@ case "${1:-rt200}" in
     inference)
         shift
         run_inference "$@"
-        ;;
-    test-cam)
-        test_camera
         ;;
     servo-test)
         shift

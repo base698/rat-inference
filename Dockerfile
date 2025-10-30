@@ -31,7 +31,6 @@ COPY calibration_output/camera_calibration.npz ./
 COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
-COPY test_camera.py ./
 COPY csi_camera_capture.py ./
 COPY servo_test_sysfs.py ./
 COPY trigger_position_test.py ./
