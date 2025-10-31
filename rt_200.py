@@ -1198,6 +1198,14 @@ class CameraTracker:
             return
 
         try:
+            # Update servo positions for dynamic crosshair (reads actual position from servos)
+            if self.connected and self.motor_bus:
+                yaw_pos, pitch_pos = self.read_motor_positions()
+                # Only update if we got valid readings
+                if yaw_pos is not None and pitch_pos is not None:
+                    self.current_yaw = yaw_pos
+                    self.current_pitch = pitch_pos
+
             # Capture frame
             ret, frame = self.camera.read()
             if not ret:
