@@ -194,16 +194,18 @@ def get_target_crosshair_x(current_yaw):
     return int(adjusted_x)
 
 
-def get_target_crosshair_y(current_pitch):
+def get_target_crosshair_y(current_pitch, camera_bore_offset_mm=82, focal_length_px=None, assumed_distance_mm=5000):
     """
-    Calculate the target crosshair Y position based on current pitch.
+    Calculate the target crosshair Y position based on current pitch using proper geometry.
 
-    As the pitch servo tilts the camera down (pitch increases), the same real-world
-    point appears higher in the image. This function compensates for that by adjusting
-    the target crosshair Y position.
+    Camera is mounted 82mm above the bore. Both are pitched together, so the parallax
+    offset depends on the distance to target and focal length.
 
     Args:
         current_pitch: Current pitch servo position (raw value)
+        camera_bore_offset_mm: Vertical distance from camera to bore (default: 82mm)
+        focal_length_px: Focal length in pixels (from calibration), or None to use assumed distance method
+        assumed_distance_mm: Assumed target distance for compensation (default: 5000mm = 5m)
 
     Returns:
         int: Adjusted Y position for the target crosshair
@@ -212,20 +214,35 @@ def get_target_crosshair_y(current_pitch):
         return int(TARGET_CROSSHAIR_Y_BASE)
 
     # Clamp pitch to valid range
-    pitch = max(PITCH_COMP_MIN, min(PITCH_COMP_MAX, current_pitch))
+    pitch_raw = max(PITCH_COMP_MIN, min(PITCH_COMP_MAX, current_pitch))
 
-    # Linear interpolation between min and max pitch
-    # t = 0.0 at PITCH_COMP_MIN, t = 1.0 at PITCH_COMP_MAX
-    pitch_range = PITCH_COMP_MAX - PITCH_COMP_MIN
-    if pitch_range == 0:
-        t = 0.0
+    # Convert pitch servo position to actual angle in degrees
+    # Servo range: 100-550 → 8.8° to 44°
+    pitch_angle_min = 8.8  # degrees at pitch=100
+    pitch_angle_max = 44.0  # degrees at pitch=550
+    servo_range = PITCH_COMP_MAX - PITCH_COMP_MIN
+
+    if servo_range == 0:
+        pitch_angle_deg = pitch_angle_min
     else:
-        t = (pitch - PITCH_COMP_MIN) / pitch_range
+        t = (pitch_raw - PITCH_COMP_MIN) / servo_range
+        pitch_angle_deg = pitch_angle_min + t * (pitch_angle_max - pitch_angle_min)
 
-    # Interpolate Y offset
-    y_offset = Y_OFFSET_AT_MIN + t * (Y_OFFSET_AT_MAX - Y_OFFSET_AT_MIN)
+    # Calculate parallax offset in pixels
+    # The bore is camera_bore_offset_mm below the camera
+    # At distance D, this creates a vertical offset in the image plane:
+    # pixel_offset = (focal_length * offset_mm) / distance_mm
 
-    # Calculate adjusted Y position
+    if focal_length_px is not None:
+        # Use actual focal length from calibration
+        # Offset in pixels = (f * 82mm) / distance
+        # We use assumed distance for now (can be updated when stereo provides real distance)
+        y_offset = (focal_length_px * camera_bore_offset_mm) / assumed_distance_mm
+    else:
+        # Fallback to empirical linear interpolation if focal length not available
+        y_offset = Y_OFFSET_AT_MIN + t * (Y_OFFSET_AT_MAX - Y_OFFSET_AT_MIN)
+
+    # Calculate adjusted Y position (positive offset moves crosshair DOWN in image)
     adjusted_y = TARGET_CROSSHAIR_Y_BASE + y_offset
 
     return int(adjusted_y)
@@ -968,7 +985,16 @@ class CameraTracker:
         """Draw crosshair, bounding box, and center point on image (OpenCV)"""
         # Draw target crosshair (dynamic position based on yaw and pitch)
         ch_x = get_target_crosshair_x(self.current_yaw)
-        ch_y = get_target_crosshair_y(self.current_pitch)
+
+        # Get focal length from calibration if available
+        focal_length_y = None
+        if self.calibration_enabled and self.camera_matrix is not None:
+            focal_length_y = self.camera_matrix[1, 1]  # fy from camera matrix
+
+        ch_y = get_target_crosshair_y(self.current_pitch,
+                                       camera_bore_offset_mm=82,
+                                       focal_length_px=focal_length_y,
+                                       assumed_distance_mm=5000)
         ch_size = CROSSHAIR_SIZE
 
         # Crosshair lines in green (BGR format)
