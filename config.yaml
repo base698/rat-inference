@@ -29,7 +29,7 @@ tracking:
   # Base crosshair position
   crosshair:
     x_base: 300      # Base X position at yaw center (2200)
-    y_base: 199      # Base Y position when pitch is at minimum (100)
+    y_base: 219      # Base Y position when pitch is at minimum (100)
 
   # Yaw compensation - adjusts crosshair X based on yaw angle
   # As yaw increases (camera pans right), crosshair X position changes
