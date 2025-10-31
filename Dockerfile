@@ -27,7 +27,7 @@ RUN pip install feetech-servo-sdk
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY config.yaml ./
 COPY yolo_inference.py ./
-COPY calibration_output/camera_calibration.npz ./
+COPY calibration_output/stereo_calibration.npz ./camera_calibration.npz
 COPY pyproject.toml ./
 COPY inference.py ./
 COPY rt_200.py ./
@@ -51,6 +51,6 @@ RUN mkdir -p detections
 # Expose port for web server
 EXPOSE 8000
 
-# Default command runs the rt_200.py server
+# Default command runs the rt_200.py server with stereo mode
 # Users can override this to run inference.py instead
-CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--model", "runs/yolo11n-2025-10-24/weights/best.pt"]
+CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--stereo", "--model", "runs/yolo11n-2025-10-24/weights/best.pt"]

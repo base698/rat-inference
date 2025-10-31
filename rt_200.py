@@ -421,7 +421,7 @@ class CameraTracker:
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
                  use_csi=False, invert_camera=False, imgsz=640,
-                 calibration_file=None):
+                 calibration_file=None, stereo_mode=False, baseline_override=None):
         """
         Initialize the camera tracker
 
@@ -438,6 +438,8 @@ class CameraTracker:
             invert_camera: Invert camera 180 degrees for upside-down mounting (default: False)
             imgsz: Inference image size in pixels (default: 640)
             calibration_file: Path to camera calibration file (.npz)
+            stereo_mode: Use stereo cameras for depth estimation
+            baseline_override: Override baseline in mm (if calibration is incorrect)
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -449,8 +451,10 @@ class CameraTracker:
         self.enable_camera = enable_camera and CV2_AVAILABLE
         self.camera_active = False
         self.camera = None
+        self.camera2 = None  # Second camera for stereo
         self.camera_id = camera_id
         self.use_csi = use_csi
+        self.stereo_mode = stereo_mode
         self.invert_camera = invert_camera
         self.model = None
         self.model_path = model_path
@@ -461,6 +465,7 @@ class CameraTracker:
         self.latest_detection = False
         self.latest_bbox = None  # Store latest bounding box (x1, y1, x2, y2)
         self.latest_center_point = None  # Store latest center point (x, y)
+        self.latest_depth = None  # Store depth in mm at detection point
         self.recent_detections = []
         self.frame_lock = threading.Lock()
         self.inference_lock = threading.Lock()
@@ -470,6 +475,19 @@ class CameraTracker:
         self.camera_matrix = None
         self.dist_coeffs = None
         self.calibration_enabled = False
+
+        # Stereo calibration
+        self.stereo_calibration_enabled = False
+        self.K1 = None
+        self.D1 = None
+        self.K2 = None
+        self.D2 = None
+        self.R = None
+        self.T = None
+        self.baseline = None
+        self.baseline_override = baseline_override
+        self.stereo_matcher = None
+
         if self.calibration_file:
             self.load_calibration()
 
@@ -534,7 +552,7 @@ class CameraTracker:
                 self.start_inference_thread()
 
     def load_calibration(self):
-        """Load camera calibration from file"""
+        """Load camera calibration from file (single or stereo)"""
         try:
             # Check if file exists
             if not os.path.exists(self.calibration_file):
@@ -543,27 +561,130 @@ class CameraTracker:
                 return
 
             calib_data = np.load(self.calibration_file)
-            self.camera_matrix = calib_data['camera_matrix']
-            self.dist_coeffs = calib_data['dist_coeffs']
-            self.calibration_enabled = True
-            rms_error = calib_data.get('rms_error', 0)
-            print(f"✓ Camera calibration loaded: {self.calibration_file}")
-            print(f"  RMS error: {rms_error:.3f} pixels")
-            print(f"  Focal length: fx={self.camera_matrix[0,0]:.2f}, fy={self.camera_matrix[1,1]:.2f}")
+
+            # Check if it's stereo calibration
+            if 'K1' in calib_data and 'K2' in calib_data:
+                # Stereo calibration
+                self.K1 = calib_data['K1']
+                self.D1 = calib_data['D1']
+                self.K2 = calib_data['K2']
+                self.D2 = calib_data['D2']
+                self.R = calib_data['R']
+                self.T = calib_data['T']
+                self.baseline = calib_data['baseline']
+                self.stereo_calibration_enabled = True
+                self.calibration_enabled = True
+
+                # Use left camera parameters for single-camera fallback
+                self.camera_matrix = self.K1
+                self.dist_coeffs = self.D1
+
+                # Create stereo matcher for disparity calculation
+                # StereoSGBM is more accurate than StereoBM
+                self.stereo_matcher = cv2.StereoSGBM_create(
+                    minDisparity=0,
+                    numDisparities=16*6,  # Must be divisible by 16
+                    blockSize=5,
+                    P1=8 * 3 * 5**2,  # Smoothness penalty
+                    P2=32 * 3 * 5**2,
+                    disp12MaxDiff=1,
+                    uniquenessRatio=10,
+                    speckleWindowSize=100,
+                    speckleRange=32,
+                    mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+                )
+
+                # Apply baseline override if provided
+                baseline_from_calib = self.baseline
+                if self.baseline_override is not None:
+                    self.baseline = self.baseline_override
+                    print(f"✓ Stereo calibration loaded: {self.calibration_file}")
+                    print(f"  RMS error: {rms_error:.3f} pixels")
+                    print(f"  Baseline (calibrated): {baseline_from_calib:.2f} mm")
+                    print(f"  Baseline (OVERRIDDEN): {self.baseline:.2f} mm ⚠")
+                    print(f"  Left focal length: fx={self.K1[0,0]:.2f}, fy={self.K1[1,1]:.2f}")
+                    print(f"  Right focal length: fx={self.K2[0,0]:.2f}, fy={self.K2[1,1]:.2f}")
+                else:
+                    rms_error = calib_data.get('rms_error', 0)
+                    print(f"✓ Stereo calibration loaded: {self.calibration_file}")
+                    print(f"  RMS error: {rms_error:.3f} pixels")
+                    print(f"  Baseline: {self.baseline:.2f} mm")
+                    print(f"  Left focal length: fx={self.K1[0,0]:.2f}, fy={self.K1[1,1]:.2f}")
+                    print(f"  Right focal length: fx={self.K2[0,0]:.2f}, fy={self.K2[1,1]:.2f}")
+            else:
+                # Single camera calibration
+                self.camera_matrix = calib_data['camera_matrix']
+                self.dist_coeffs = calib_data['dist_coeffs']
+                self.calibration_enabled = True
+                rms_error = calib_data.get('rms_error', 0)
+                print(f"✓ Single camera calibration loaded: {self.calibration_file}")
+                print(f"  RMS error: {rms_error:.3f} pixels")
+                print(f"  Focal length: fx={self.camera_matrix[0,0]:.2f}, fy={self.camera_matrix[1,1]:.2f}")
         except Exception as e:
             print(f"⚠ Failed to load calibration: {e}")
             self.calibration_enabled = False
+            self.stereo_calibration_enabled = False
 
-    def undistort_frame(self, frame):
+    def undistort_frame(self, frame, use_left=True):
         """Apply camera calibration to undistort frame"""
         if not self.calibration_enabled:
             return frame
 
         try:
-            return cv2.undistort(frame, self.camera_matrix, self.dist_coeffs)
+            if self.stereo_calibration_enabled:
+                # Use appropriate camera matrix for stereo
+                K = self.K1 if use_left else self.K2
+                D = self.D1 if use_left else self.D2
+                return cv2.undistort(frame, K, D)
+            else:
+                return cv2.undistort(frame, self.camera_matrix, self.dist_coeffs)
         except Exception as e:
             print(f"Error undistorting frame: {e}")
             return frame
+
+    def calculate_depth(self, frame_left, frame_right, x, y):
+        """
+        Calculate depth at a specific pixel location using stereo matching
+
+        Args:
+            frame_left: Left camera frame (undistorted)
+            frame_right: Right camera frame (undistorted)
+            x: X coordinate in image
+            y: Y coordinate in image
+
+        Returns:
+            Depth in millimeters, or None if calculation fails
+        """
+        if not self.stereo_calibration_enabled or self.stereo_matcher is None:
+            return None
+
+        try:
+            # Convert to grayscale for stereo matching
+            gray_left = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY)
+            gray_right = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY)
+
+            # Compute disparity map
+            disparity = self.stereo_matcher.compute(gray_left, gray_right).astype(np.float32) / 16.0
+
+            # Get disparity at the detection point
+            x_clamped = max(0, min(x, disparity.shape[1] - 1))
+            y_clamped = max(0, min(y, disparity.shape[0] - 1))
+            d = disparity[y_clamped, x_clamped]
+
+            # Check if disparity is valid (not zero or negative)
+            if d <= 0:
+                return None
+
+            # Calculate depth using formula: depth = (focal_length * baseline) / disparity
+            # focal_length is in pixels, baseline is in mm
+            focal_length = self.K1[0, 0]  # fx from left camera
+            depth_mm = (focal_length * self.baseline) / d
+
+            return depth_mm
+
+        except Exception as e:
+            print(f"Error calculating depth: {e}")
+            return None
 
     def init_trigger_servo(self):
         """Initialize PWM trigger servo using sysfs"""
@@ -652,7 +773,7 @@ class CameraTracker:
         )
 
     def init_camera(self):
-        """Initialize camera (USB or CSI)"""
+        """Initialize camera (USB or CSI), and second camera if stereo mode"""
         try:
             if self.use_csi:
                 # Determine flip method based on invert_camera flag
@@ -661,7 +782,7 @@ class CameraTracker:
                 # Use CSI camera helper (workaround for OpenCV without GStreamer)
                 if CSI_HELPER_AVAILABLE:
                     self.camera = CSICameraCapture(
-                        sensor_id=self.camera_id,
+                        sensor_id=0,  # Left camera is sensor 0
                         width=640,
                         height=480,
                         fps=VIDEO_FPS,
@@ -669,11 +790,23 @@ class CameraTracker:
                     )
                     self.camera.start()
                     flip_status = "inverted" if self.invert_camera else "normal"
-                    print(f"✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
+                    print(f"✓ CSI Camera (left) initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
+
+                    # Initialize second camera for stereo
+                    if self.stereo_mode:
+                        self.camera2 = CSICameraCapture(
+                            sensor_id=1,  # Right camera is sensor 1
+                            width=640,
+                            height=480,
+                            fps=VIDEO_FPS,
+                            flip_method=flip_method
+                        )
+                        self.camera2.start()
+                        print(f"✓ CSI Camera (right) initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
                 else:
                     # Fallback to cv2.VideoCapture with GStreamer
                     pipeline = self.gstreamer_pipeline(
-                        sensor_id=self.camera_id,
+                        sensor_id=0,
                         capture_width=1280,
                         capture_height=720,
                         display_width=640,
@@ -683,7 +816,21 @@ class CameraTracker:
                     )
                     self.camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
                     flip_status = "inverted" if self.invert_camera else "normal"
-                    print(f"✓ CSI Camera initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
+                    print(f"✓ CSI Camera (left) initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
+
+                    # Initialize second camera for stereo
+                    if self.stereo_mode:
+                        pipeline2 = self.gstreamer_pipeline(
+                            sensor_id=1,
+                            capture_width=1280,
+                            capture_height=720,
+                            display_width=640,
+                            display_height=480,
+                            framerate=VIDEO_FPS,
+                            flip_method=flip_method
+                        )
+                        self.camera2 = cv2.VideoCapture(pipeline2, cv2.CAP_GSTREAMER)
+                        print(f"✓ CSI Camera (right) initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
             else:
                 # Use regular USB camera
                 self.camera = cv2.VideoCapture(self.camera_id)
@@ -694,10 +841,22 @@ class CameraTracker:
                 self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 self.camera.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
                 flip_status = "inverted" if self.invert_camera else "normal"
-                print(f"✓ USB Camera {self.camera_id} initialized (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
+                print(f"✓ USB Camera (left) {self.camera_id} initialized (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
+
+                # Initialize second USB camera for stereo
+                if self.stereo_mode:
+                    self.camera2 = cv2.VideoCapture(self.camera_id + 1)
+                    self.camera2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                    self.camera2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    self.camera2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    self.camera2.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
+                    print(f"✓ USB Camera (right) {self.camera_id + 1} initialized (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
 
             if not self.camera.isOpened():
-                raise Exception("Failed to open camera")
+                raise Exception("Failed to open left camera")
+
+            if self.stereo_mode and not self.camera2.isOpened():
+                raise Exception("Failed to open right camera")
 
             self.camera_active = True
 
@@ -705,6 +864,7 @@ class CameraTracker:
             print(f"Failed to initialize camera: {e}")
             self.camera_active = False
             self.camera = None
+            self.camera2 = None
 
     def init_model(self):
         """Initialize YOLO model"""
@@ -1080,23 +1240,36 @@ class CameraTracker:
             return
 
         try:
-            # Capture frame
+            # Capture frame from left camera
             ret, frame = self.camera.read()
             if not ret:
                 return
+
+            # Capture frame from right camera if stereo mode
+            frame_right = None
+            if self.stereo_mode and self.camera2:
+                ret2, frame_right = self.camera2.read()
+                if not ret2:
+                    frame_right = None
 
             # Rotate 180 degrees if invert_camera is enabled and not using CSI with flip_method
             # (CSI camera handles rotation in GStreamer pipeline)
             if self.invert_camera and not self.use_csi:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
+                if frame_right is not None:
+                    frame_right = cv2.rotate(frame_right, cv2.ROTATE_180)
 
             # Resize to 640x480 if needed (camera may not respect resolution settings)
             if frame.shape[1] != 640 or frame.shape[0] != 480:
                 frame = cv2.resize(frame, (640, 480))
+            if frame_right is not None and (frame_right.shape[1] != 640 or frame_right.shape[0] != 480):
+                frame_right = cv2.resize(frame_right, (640, 480))
 
             # Apply calibration (undistort) before inference
             if self.calibration_enabled:
-                frame = self.undistort_frame(frame)
+                frame = self.undistort_frame(frame, use_left=True)
+                if frame_right is not None and self.stereo_calibration_enabled:
+                    frame_right = self.undistort_frame(frame_right, use_left=False)
 
             # Run inference using shared inference module (YOLO works directly with numpy arrays)
             results = yolo_run_inference(
@@ -1116,6 +1289,8 @@ class CameraTracker:
             bbox = None
             center_point = None
 
+            # Calculate depth if stereo enabled
+            depth_mm = None
             if detections:
                 # Use the first (highest confidence) detection
                 det = detections[0]
@@ -1125,6 +1300,13 @@ class CameraTracker:
                 center_point = det['center']
                 center_x, center_y = center_point
 
+                # Calculate depth if stereo calibration is available
+                if self.stereo_calibration_enabled and frame_right is not None:
+                    depth_mm = self.calculate_depth(frame, frame_right, center_x, center_y)
+                    if depth_mm is not None:
+                        depth_m = depth_mm / 1000.0  # Convert to meters
+                        print(f"   Depth: {depth_m:.2f}m ({depth_mm:.1f}mm)")
+
                 # Save detection image
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 detection_filename = f"detection_{timestamp}.jpg"
@@ -1133,7 +1315,8 @@ class CameraTracker:
 
                 self.detection_count += 1
                 # Format: "time - message | filename" so the UI can parse and link it
-                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {confidence:.3f}) at ({center_x}, {center_y}) | {detection_filename}"
+                depth_str = f" @ {depth_mm/1000.0:.2f}m" if depth_mm else ""
+                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {confidence:.3f}) at ({center_x}, {center_y}){depth_str} | {detection_filename}"
                 self.recent_detections.append(detection_msg)
                 self.recent_detections = self.recent_detections[-10:]
 
@@ -1158,6 +1341,7 @@ class CameraTracker:
                 self.latest_confidence = confidence
                 self.latest_bbox = bbox
                 self.latest_center_point = center_point
+                self.latest_depth = depth_mm
 
         except Exception as e:
             print(f"Inference error: {e}")
@@ -1265,6 +1449,10 @@ def main():
                        help="Inference image size in pixels (default: 640)")
     parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
                        help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
+    parser.add_argument("--stereo", action="store_true",
+                       help="Enable stereo mode for depth estimation (requires stereo calibration)")
+    parser.add_argument("--baseline-override", type=float, default=None,
+                       help="Override stereo baseline in mm (use if calibration baseline is incorrect)")
 
     # Trigger servo settings
     parser.add_argument("--enable-trigger", action="store_true",
@@ -1292,7 +1480,9 @@ def main():
         use_csi=args.use_csi,
         invert_camera=args.invert_camera,
         imgsz=args.imgsz,
-        calibration_file=args.calibration
+        calibration_file=args.calibration,
+        stereo_mode=args.stereo,
+        baseline_override=args.baseline_override
     )
     tracker_instance = tracker
 
@@ -1313,10 +1503,15 @@ def main():
         print(f"Inference image size: {args.imgsz}px")
     calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
     if tracker.calibration_enabled:
-        print(f"Calibration: {calib_status} ({args.calibration})")
+        calib_type = "STEREO" if tracker.stereo_calibration_enabled else "SINGLE"
+        print(f"Calibration: {calib_status} ({calib_type}, {args.calibration})")
     elif args.calibration != "camera_calibration.npz":
         # Only show warning if user explicitly specified a file
         print(f"Calibration: {calib_status} (file not found)")
+
+    if args.stereo:
+        stereo_status = "ENABLED" if tracker.stereo_calibration_enabled else "DISABLED (no stereo calibration)"
+        print(f"Stereo depth: {stereo_status}")
     print()
 
     # Start API server in a separate thread
