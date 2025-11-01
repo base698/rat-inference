@@ -28,8 +28,8 @@ servos:
 tracking:
   # Base crosshair position
   crosshair:
-    x_base: 292      # Base X position at yaw center (2200)
-    y_base: 339      # Base Y position calibrated at pitch 336 (was 279, moved down 16)
+    x_base: 290      # Base X position at yaw center (2200)
+    y_base: 329      # Base Y position calibrated at pitch 336 (was 279, moved down 16)
 
   # Yaw compensation - adjusts crosshair X based on yaw angle
   # As yaw increases (camera pans right), crosshair X position changes
