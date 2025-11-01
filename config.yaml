@@ -14,22 +14,22 @@ servos:
   pitch:
     motor_id: 5
     min: 0         # Minimum pitch position (level, raw)
-    max: 550       # Maximum pitch position (~55 degrees down, raw)
+    max: 500       # Maximum pitch position (~55 degrees down, raw)
     center: 250    # Start at level position
 
   # Trigger servo (PWM)
   trigger:
     pwm_chip: 0
     pwm_channel: 0
-    neutral_angle: 85   # Rest/safe position in degrees
-    action_angle: 18    # Activated trap position in degrees
+    neutral_angle: 105   # Rest/safe position in degrees
+    action_angle: 10    # Activated trap position in degrees
 
 # Camera and Tracking Configuration
 tracking:
   # Base crosshair position
   crosshair:
     x_base: 300      # Base X position at yaw center (2200)
-    y_base: 280      # Base Y position calibrated at pitch 336 (was 279, moved down 16)
+    y_base: 345      # Base Y position calibrated at pitch 336 (was 279, moved down 16)
 
   # Yaw compensation - adjusts crosshair X based on yaw angle
   # As yaw increases (camera pans right), crosshair X position changes
