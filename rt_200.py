@@ -611,6 +611,9 @@ class CameraTracker:
                     mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
                 )
 
+                # Get RMS error from calibration
+                rms_error = calib_data.get('rms_error', 0)
+
                 # Apply baseline override if provided
                 baseline_from_calib = self.baseline
                 if self.baseline_override is not None:
@@ -622,7 +625,6 @@ class CameraTracker:
                     print(f"  Left focal length: fx={self.K1[0,0]:.2f}, fy={self.K1[1,1]:.2f}")
                     print(f"  Right focal length: fx={self.K2[0,0]:.2f}, fy={self.K2[1,1]:.2f}")
                 else:
-                    rms_error = calib_data.get('rms_error', 0)
                     print(f"✓ Stereo calibration loaded: {self.calibration_file}")
                     print(f"  RMS error: {rms_error:.3f} pixels")
                     print(f"  Baseline: {self.baseline:.2f} mm")
