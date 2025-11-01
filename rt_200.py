@@ -983,7 +983,7 @@ class CameraTracker:
         if self.enable_servos:
             self.raw_write("pitch", position)
 
-    def draw_overlays(self, frame):
+    def draw_overlays(self, frame, frame_right=None):
         """Draw crosshair, bounding box, and center point on image (OpenCV)"""
         # Draw target crosshair (dynamic position based on yaw and pitch)
         ch_x = get_target_crosshair_x(self.current_yaw)
@@ -999,11 +999,32 @@ class CameraTracker:
                                        assumed_distance_mm=5000)
         ch_size = CROSSHAIR_SIZE
 
+        # Calculate depth at crosshair if stereo is available
+        crosshair_depth_m = None
+        if self.stereo_calibration_enabled and frame_right is not None:
+            depth_mm = self.calculate_depth(frame, frame_right, ch_x, ch_y)
+            if depth_mm is not None:
+                crosshair_depth_m = depth_mm / 1000.0  # Convert to meters
+
         # Crosshair lines in green (BGR format)
         cv2.line(frame, (ch_x - ch_size, ch_y), (ch_x + ch_size, ch_y), (0, 255, 0), 2)
         cv2.line(frame, (ch_x, ch_y - ch_size), (ch_x, ch_y + ch_size), (0, 255, 0), 2)
         # Crosshair circle
         cv2.circle(frame, (ch_x, ch_y), 5, (0, 255, 0), 2)
+
+        # Display distance at crosshair if available
+        if crosshair_depth_m is not None:
+            depth_text = f"{crosshair_depth_m:.2f}m"
+            # Draw text with black background for visibility
+            text_size = cv2.getTextSize(depth_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+            text_x = ch_x + ch_size + 10
+            text_y = ch_y
+            # Background rectangle
+            cv2.rectangle(frame, (text_x - 2, text_y - text_size[1] - 2),
+                         (text_x + text_size[0] + 2, text_y + 5), (0, 0, 0), -1)
+            # Text in green
+            cv2.putText(frame, depth_text, (text_x, text_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         # Draw bounding box and center point if detection exists
         with self.inference_lock:
@@ -1234,26 +1255,39 @@ class CameraTracker:
                     self.current_yaw = yaw_pos
                     self.current_pitch = pitch_pos
 
-            # Capture frame
+            # Capture frame from left camera
             ret, frame = self.camera.read()
             if not ret:
                 return
+
+            # Capture frame from right camera if stereo mode
+            frame_right = None
+            if self.stereo_mode and self.camera2:
+                ret2, frame_right = self.camera2.read()
+                if not ret2:
+                    frame_right = None
 
             # Rotate 180 degrees if invert_camera is enabled and not using CSI with flip_method
             # (CSI camera handles rotation in GStreamer pipeline)
             if self.invert_camera and not self.use_csi:
                 frame = cv2.rotate(frame, cv2.ROTATE_180)
+                if frame_right is not None:
+                    frame_right = cv2.rotate(frame_right, cv2.ROTATE_180)
 
             # Resize to 640x480 if needed (camera may not respect resolution settings)
             if frame.shape[1] != 640 or frame.shape[0] != 480:
                 frame = cv2.resize(frame, (640, 480))
+            if frame_right is not None and (frame_right.shape[1] != 640 or frame_right.shape[0] != 480):
+                frame_right = cv2.resize(frame_right, (640, 480))
 
             # Apply calibration (undistort)
             if self.calibration_enabled:
-                frame = self.undistort_frame(frame)
+                frame = self.undistort_frame(frame, use_left=True)
+                if frame_right is not None and self.stereo_calibration_enabled:
+                    frame_right = self.undistort_frame(frame_right, use_left=False)
 
-            # Draw overlays
-            frame = self.draw_overlays(frame)
+            # Draw overlays (pass right frame for depth calculation)
+            frame = self.draw_overlays(frame, frame_right)
 
             # Convert to JPEG
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
