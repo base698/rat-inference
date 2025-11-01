@@ -989,15 +989,23 @@ class CameraTracker:
         ch_x = get_target_crosshair_x(self.current_yaw)
 
         # Get focal length from calibration if available
-        focal_length_y = None
-        if self.calibration_enabled and self.camera_matrix is not None:
-            focal_length_y = self.camera_matrix[1, 1]  # fy from camera matrix
+        # Don't use geometric calculation yet - use empirical linear interpolation
+        focal_length_y = None  # Set to None to force fallback to linear interpolation
+        # if self.calibration_enabled and self.camera_matrix is not None:
+        #     focal_length_y = self.camera_matrix[1, 1]  # fy from camera matrix
 
         ch_y = get_target_crosshair_y(self.current_pitch,
                                        camera_bore_offset_mm=82,
                                        focal_length_px=focal_length_y,
                                        assumed_distance_mm=5000)
         ch_size = CROSSHAIR_SIZE
+
+        # Debug: print servo positions and crosshair (only every 30 frames to avoid spam)
+        if not hasattr(self, '_frame_counter'):
+            self._frame_counter = 0
+        self._frame_counter += 1
+        if self._frame_counter % 30 == 0:  # Print once per second
+            print(f"[DEBUG] Yaw: {self.current_yaw}, Pitch: {self.current_pitch}, Crosshair: ({ch_x}, {ch_y})")
 
         # Calculate depth at crosshair if stereo is available
         crosshair_depth_m = None
