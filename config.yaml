@@ -22,7 +22,7 @@ servos:
     pwm_chip: 0
     pwm_channel: 0
     neutral_angle: 105   # Rest/safe position in degrees
-    action_angle: 25    # Activated trap position in degrees
+    action_angle: 20    # Activated trap position in degrees
 
 # Camera and Tracking Configuration
 tracking:
