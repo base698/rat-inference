@@ -486,6 +486,7 @@ class CameraTracker:
         self.recent_detections = []
         self.frame_lock = threading.Lock()
         self.inference_lock = threading.Lock()
+        self.motor_lock = threading.Lock()
 
         # Camera calibration
         self.calibration_file = calibration_file
@@ -504,6 +505,15 @@ class CameraTracker:
         self.baseline = None
         self.baseline_override = baseline_override
         self.stereo_matcher = None
+        self.R1 = None
+        self.R2 = None
+        self.P1 = None
+        self.P2 = None
+        self.Q = None
+        self.stereo_map_left = None
+        self.stereo_map_right = None
+        self.stereo_focal_length = None
+        self.last_depth_debug = "not computed"
 
         if self.calibration_file:
             self.load_calibration()
@@ -595,6 +605,7 @@ class CameraTracker:
                 # Use left camera parameters for single-camera fallback
                 self.camera_matrix = self.K1
                 self.dist_coeffs = self.D1
+                self.init_stereo_rectification()
 
                 # Create stereo matcher for disparity calculation
                 # StereoSGBM is more accurate than StereoBM
@@ -630,6 +641,8 @@ class CameraTracker:
                     print(f"  Baseline: {self.baseline:.2f} mm")
                     print(f"  Left focal length: fx={self.K1[0,0]:.2f}, fy={self.K1[1,1]:.2f}")
                     print(f"  Right focal length: fx={self.K2[0,0]:.2f}, fy={self.K2[1,1]:.2f}")
+                if rms_error > 1.0:
+                    print(f"  ⚠ Stereo RMS is high ({rms_error:.3f}px); distance may be inaccurate until recalibrated")
             else:
                 # Single camera calibration
                 self.camera_matrix = calib_data['camera_matrix']
@@ -643,6 +656,76 @@ class CameraTracker:
             print(f"⚠ Failed to load calibration: {e}")
             self.calibration_enabled = False
             self.stereo_calibration_enabled = False
+
+    def init_stereo_rectification(self, image_size=(640, 480)):
+        """Build rectification maps so stereo disparity is computed on aligned frames."""
+        try:
+            self.R1, self.R2, self.P1, self.P2, self.Q, _, _ = cv2.stereoRectify(
+                self.K1, self.D1,
+                self.K2, self.D2,
+                image_size,
+                self.R, self.T,
+                flags=cv2.CALIB_ZERO_DISPARITY,
+                alpha=0
+            )
+
+            self.stereo_map_left = cv2.initUndistortRectifyMap(
+                self.K1, self.D1, self.R1, self.P1, image_size, cv2.CV_16SC2
+            )
+            self.stereo_map_right = cv2.initUndistortRectifyMap(
+                self.K2, self.D2, self.R2, self.P2, image_size, cv2.CV_16SC2
+            )
+
+            self.stereo_focal_length = float(self.P1[0, 0])
+            rectified_baseline = abs(float(self.P2[0, 3]) / float(self.P2[0, 0]))
+            if self.baseline_override is None:
+                self.baseline = rectified_baseline
+
+            print("✓ Stereo rectification initialized")
+            print(f"  Rectified focal length: {self.stereo_focal_length:.2f}px")
+            print(f"  Rectified baseline: {rectified_baseline:.2f} mm")
+        except Exception as e:
+            print(f"⚠ Failed to initialize stereo rectification: {e}")
+            self.stereo_calibration_enabled = False
+            self.stereo_map_left = None
+            self.stereo_map_right = None
+
+    def rectify_stereo_frames(self, frame_left, frame_right):
+        """Rectify left/right frames before stereo matching."""
+        if self.stereo_map_left is None or self.stereo_map_right is None:
+            return frame_left, frame_right
+
+        try:
+            left = cv2.remap(
+                frame_left,
+                self.stereo_map_left[0],
+                self.stereo_map_left[1],
+                cv2.INTER_LINEAR
+            )
+            right = cv2.remap(
+                frame_right,
+                self.stereo_map_right[0],
+                self.stereo_map_right[1],
+                cv2.INTER_LINEAR
+            )
+            return left, right
+        except Exception as e:
+            print(f"Error rectifying stereo frames: {e}")
+            return frame_left, frame_right
+
+    def rectify_stereo_point(self, x, y):
+        """Map a point from the raw left image into rectified stereo coordinates."""
+        if self.R1 is None or self.P1 is None:
+            return int(x), int(y)
+
+        try:
+            point = np.array([[[float(x), float(y)]]], dtype=np.float32)
+            rectified = cv2.undistortPoints(point, self.K1, self.D1, R=self.R1, P=self.P1)
+            rx, ry = rectified[0, 0]
+            return int(round(rx)), int(round(ry))
+        except Exception as e:
+            print(f"Error rectifying stereo point: {e}")
+            return int(x), int(y)
 
     def undistort_frame(self, frame, use_left=True):
         """Apply camera calibration to undistort frame"""
@@ -675,9 +758,13 @@ class CameraTracker:
             Depth in millimeters, or None if calculation fails
         """
         if not self.stereo_calibration_enabled or self.stereo_matcher is None:
+            self.last_depth_debug = "stereo disabled"
             return None
 
         try:
+            frame_left, frame_right = self.rectify_stereo_frames(frame_left, frame_right)
+            x, y = self.rectify_stereo_point(x, y)
+
             # Convert to grayscale for stereo matching
             gray_left = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY)
             gray_right = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY)
@@ -685,23 +772,42 @@ class CameraTracker:
             # Compute disparity map
             disparity = self.stereo_matcher.compute(gray_left, gray_right).astype(np.float32) / 16.0
 
-            # Get disparity at the detection point
-            x_clamped = max(0, min(x, disparity.shape[1] - 1))
-            y_clamped = max(0, min(y, disparity.shape[0] - 1))
-            d = disparity[y_clamped, x_clamped]
+            if x < 0 or x >= disparity.shape[1] or y < 0 or y >= disparity.shape[0]:
+                self.last_depth_debug = f"rectified point out of frame ({x}, {y})"
+                return None
+
+            # Use the median of valid disparities around the point to reduce pixel noise.
+            d = None
+            for radius in (4, 8, 16, 32):
+                x1 = max(0, x - radius)
+                x2 = min(disparity.shape[1], x + radius + 1)
+                y1 = max(0, y - radius)
+                y2 = min(disparity.shape[0], y + radius + 1)
+                window = disparity[y1:y2, x1:x2]
+                valid = window[window > 0]
+                if valid.size >= 8:
+                    d = float(np.median(valid))
+                    break
+
+            if d is None:
+                self.last_depth_debug = f"no valid disparity near ({x}, {y})"
+                return None
 
             # Check if disparity is valid (not zero or negative)
             if d <= 0:
+                self.last_depth_debug = f"invalid disparity {d:.2f}px"
                 return None
 
             # Calculate depth using formula: depth = (focal_length * baseline) / disparity
             # focal_length is in pixels, baseline is in mm
-            focal_length = self.K1[0, 0]  # fx from left camera
+            focal_length = self.stereo_focal_length or self.K1[0, 0]
             depth_mm = (focal_length * self.baseline) / d
+            self.last_depth_debug = f"disp {d:.2f}px"
 
             return depth_mm
 
         except Exception as e:
+            self.last_depth_debug = f"error: {e}"
             print(f"Error calculating depth: {e}")
             return None
 
@@ -900,8 +1006,9 @@ class CameraTracker:
             return self.current_yaw, self.current_pitch
 
         try:
-            yaw_pos = self.motor_bus.read("Present_Position", "yaw", normalize=False)
-            pitch_pos = self.motor_bus.read("Present_Position", "pitch", normalize=False)
+            with self.motor_lock:
+                yaw_pos = self.motor_bus.read("Present_Position", "yaw", normalize=False)
+                pitch_pos = self.motor_bus.read("Present_Position", "pitch", normalize=False)
             return int(yaw_pos), int(pitch_pos)
         except Exception as e:
             print(f"Error reading motor positions: {e}")
@@ -913,6 +1020,8 @@ class CameraTracker:
 
         def timeout_handler(signum, frame):
             raise TimeoutError("Connection timed out")
+
+        previous_alarm_handler = signal.getsignal(signal.SIGALRM)
 
         try:
             # Define motors with their IDs and models
@@ -930,10 +1039,12 @@ class CameraTracker:
 
             try:
                 self.motor_bus.connect(handshake=False)
-                signal.alarm(0)  # Cancel the alarm
             except TimeoutError:
                 print(f"Connection timed out after 5 seconds on {self.port}")
                 raise
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous_alarm_handler)
 
             self.connected = True
 
@@ -963,7 +1074,8 @@ class CameraTracker:
             # Feetech servos use 16-bit unsigned position values (0-65535)
             value = int(value) & 0xFFFF  # Mask to 16-bit unsigned
             # Write directly to Goal_Position register
-            self.motor_bus.write("Goal_Position", motor_name, value, normalize=False)
+            with self.motor_lock:
+                self.motor_bus.write("Goal_Position", motor_name, value, normalize=False)
         except Exception as e:
             print(f"Error writing to {motor_name}: {e}")
 
@@ -1004,15 +1116,26 @@ class CameraTracker:
         if not hasattr(self, '_frame_counter'):
             self._frame_counter = 0
         self._frame_counter += 1
-        if self._frame_counter % 30 == 0:  # Print once per second
-            print(f"[DEBUG] Yaw: {self.current_yaw}, Pitch: {self.current_pitch}, Crosshair: ({ch_x}, {ch_y})")
 
         # Calculate depth at crosshair if stereo is available
         crosshair_depth_m = None
+        depth_text = None
+        depth_color = (0, 255, 0)
         if self.stereo_calibration_enabled and frame_right is not None:
             depth_mm = self.calculate_depth(frame, frame_right, ch_x, ch_y)
             if depth_mm is not None:
                 crosshair_depth_m = depth_mm / 1000.0  # Convert to meters
+                depth_text = f"{crosshair_depth_m:.2f}m"
+            else:
+                depth_text = f"-- {self.last_depth_debug}"
+                depth_color = (0, 200, 255)
+        elif self.stereo_mode:
+            depth_text = "-- no right frame/calibration"
+            depth_color = (0, 200, 255)
+
+        if self._frame_counter % 30 == 0:  # Print once per second
+            depth_debug = depth_text if depth_text is not None else "n/a"
+            print(f"[DEBUG] Yaw: {self.current_yaw}, Pitch: {self.current_pitch}, Crosshair: ({ch_x}, {ch_y}), Depth: {depth_debug}")
 
         # Crosshair lines in green (BGR format)
         cv2.line(frame, (ch_x - ch_size, ch_y), (ch_x + ch_size, ch_y), (0, 255, 0), 2)
@@ -1020,9 +1143,8 @@ class CameraTracker:
         # Crosshair circle
         cv2.circle(frame, (ch_x, ch_y), 5, (0, 255, 0), 2)
 
-        # Display distance at crosshair if available
-        if crosshair_depth_m is not None:
-            depth_text = f"{crosshair_depth_m:.2f}m"
+        # Display distance/status at crosshair when stereo mode is active
+        if depth_text is not None:
             # Draw text with black background for visibility
             text_size = cv2.getTextSize(depth_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
             text_x = ch_x + ch_size + 10
@@ -1032,7 +1154,7 @@ class CameraTracker:
                          (text_x + text_size[0] + 2, text_y + 5), (0, 0, 0), -1)
             # Text in green
             cv2.putText(frame, depth_text, (text_x, text_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, depth_color, 2)
 
         # Draw bounding box and center point if detection exists
         with self.inference_lock:
@@ -1292,11 +1414,9 @@ class CameraTracker:
             if frame_right is not None and (frame_right.shape[1] != 640 or frame_right.shape[0] != 480):
                 frame_right = cv2.resize(frame_right, (640, 480))
 
-            # Apply calibration (undistort)
-            if self.calibration_enabled:
+            # Keep the displayed frame unrectified; rectification is only for depth math.
+            if self.calibration_enabled and not self.stereo_calibration_enabled:
                 frame = self.undistort_frame(frame, use_left=True)
-                if frame_right is not None and self.stereo_calibration_enabled:
-                    frame_right = self.undistort_frame(frame_right, use_left=False)
 
             # Draw overlays (pass right frame for depth calculation)
             frame = self.draw_overlays(frame, frame_right)
@@ -1347,11 +1467,9 @@ class CameraTracker:
             if frame_right is not None and (frame_right.shape[1] != 640 or frame_right.shape[0] != 480):
                 frame_right = cv2.resize(frame_right, (640, 480))
 
-            # Apply calibration (undistort) before inference
-            if self.calibration_enabled:
+            # Keep inference on the normal camera image; depth rectifies hidden copies only.
+            if self.calibration_enabled and not self.stereo_calibration_enabled:
                 frame = self.undistort_frame(frame, use_left=True)
-                if frame_right is not None and self.stereo_calibration_enabled:
-                    frame_right = self.undistort_frame(frame_right, use_left=False)
 
             # Run inference using shared inference module (YOLO works directly with numpy arrays)
             results = yolo_run_inference(
@@ -1558,6 +1676,11 @@ def main():
         args.disable_servos = True
         args.no_connect = True
         args.disable_detection = True
+
+    if args.stereo and args.calibration == "camera_calibration.npz":
+        default_stereo_calibration = "calibration_output/stereo_calibration.npz"
+        if os.path.exists(default_stereo_calibration):
+            args.calibration = default_stereo_calibration
 
     model_path = None
     if args.enable_camera and not args.disable_detection:
