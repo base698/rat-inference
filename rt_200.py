@@ -1515,6 +1515,8 @@ def main():
                        help="Skip servo connection attempt (web interface only)")
 
     # Camera and detection settings
+    parser.add_argument("--video-only", action="store_true",
+                       help="Convenience mode: CSI camera web stream, no servos, no detection")
     parser.add_argument("--enable-camera", action="store_true",
                        help="Enable camera")
     parser.add_argument("--camera-id", type=int, default=0,
@@ -1525,6 +1527,8 @@ def main():
                        help="Invert camera 180 degrees for upside-down mounting")
     parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-10-24/weights/best.pt",
                        help="Path to YOLO model")
+    parser.add_argument("--disable-detection", action="store_true",
+                       help="Disable YOLO detection while keeping the camera stream enabled")
     parser.add_argument("--confidence", "-c", type=float, default=0.75,
                        help="Detection confidence threshold")
     parser.add_argument("--imgsz", type=int, default=640,
@@ -1548,6 +1552,17 @@ def main():
 
     args = parser.parse_args()
 
+    if args.video_only:
+        args.enable_camera = True
+        args.use_csi = True
+        args.disable_servos = True
+        args.no_connect = True
+        args.disable_detection = True
+
+    model_path = None
+    if args.enable_camera and not args.disable_detection:
+        model_path = args.model
+
     # Create tracker and set global instance
     global tracker_instance
     tracker = CameraTracker(
@@ -1556,7 +1571,7 @@ def main():
         no_connect=args.no_connect,
         enable_camera=args.enable_camera,
         enable_trigger=args.enable_trigger,
-        model_path=args.model if args.enable_camera else None,
+        model_path=model_path,
         confidence_threshold=args.confidence,
         camera_id=args.camera_id,
         use_csi=args.use_csi,
@@ -1578,8 +1593,10 @@ def main():
         camera_type = "CSI (GStreamer)" if args.use_csi else "USB"
         invert_status = "inverted (upside-down)" if args.invert_camera else "normal"
         print(f"Camera type: {camera_type} (ID: {args.camera_id}, {invert_status})")
-    print(f"Detection: {'ENABLED' if (args.enable_camera and args.model) else 'DISABLED'}")
-    if args.enable_camera and args.model:
+    else:
+        print("Tip: use --video-only for Jetson CSI camera web streaming without servos or detection")
+    print(f"Detection: {'ENABLED' if model_path else 'DISABLED'}")
+    if model_path:
         print(f"Model: {args.model}")
         print(f"Confidence threshold: {args.confidence}")
         print(f"Inference image size: {args.imgsz}px")
