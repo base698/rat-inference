@@ -29,7 +29,7 @@ tracking:
   # Base crosshair position
   crosshair:
     x_base: 290      # Base X position at yaw center (2200)
-    y_base: 329      # Base Y position calibrated at pitch 336 (was 279, moved down 16)
+    y_base: 357      # Base Y position shifted down 28px to align laser/crosshair
 
   # Yaw compensation - adjusts crosshair X based on yaw angle
   # As yaw increases (camera pans right), crosshair X position changes
@@ -46,8 +46,28 @@ tracking:
     enabled: true
     pitch_min: 100         # Pitch value with no Y adjustment
     pitch_max: 550         # Pitch value with maximum Y adjustment
-    y_offset_at_min: -20.8 # Y offset when pitch = pitch_min (adjust up by 20.8px)
-    y_offset_at_max: 44.2  # Y offset when pitch = pitch_max (adjust down by 44.2px)
+    y_offset_at_min: -33.8 # Y offset when pitch = pitch_min (adjust up by 33.8px)
+    y_offset_at_max: -30.0 # Fallback endpoint; points below are used when present
+    points:
+      - pitch: 100
+        offset: -33.8
+      - pitch: 240
+        offset: -18.9
+      - pitch: 250
+        offset: -17.8
+      - pitch: 415
+        offset: -21.2
+      - pitch: 550
+        offset: -30.0
+
+  # Depth-based crosshair compensation for laser/camera vertical separation.
+  # Positive laser_vertical_offset_mm means the laser exits below the camera center.
+  # The pitch compensation table above is the fallback/zeroed value at reference distance.
+  depth_crosshair_compensation:
+    enabled: true
+    laser_vertical_offset_mm: 55.0
+    reference_distance_mm: 1000.0
+    max_adjust_px: 80.0
 
   crosshair_size: 20   # Size of crosshair in pixels
 

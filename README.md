@@ -141,12 +141,102 @@ uv run python rt_200.py \
 uv run python rt_200.py --no-connect --enable-camera --use-csi
 ```
 
+#### Stereo Depth + Laser Tracking
+
+Current working command for CSI stereo cameras, Feetech tracking servos, stereo depth, and laser/camera vertical compensation:
+
+```bash
+uv run --extra jetson python rt_200.py \
+  --enable-camera \
+  --use-csi \
+  --disable-detection \
+  --stereo \
+  --calibration calibration_output_recal/stereo_calibration.npz \
+  --baseline-override 57.5 \
+  --port /dev/ttyACM0
+```
+
+Useful variants:
+
+```bash
+# Camera-only stereo test, no servos
+uv run --extra jetson python rt_200.py \
+  --enable-camera \
+  --use-csi \
+  --disable-detection \
+  --disable-servos \
+  --no-connect \
+  --stereo \
+  --calibration calibration_output_recal/stereo_calibration.npz \
+  --baseline-override 57.5
+
+# Simple video-only CSI stream, no servos, no detection
+uv run python rt_200.py --video-only
+```
+
+The measured physical distance between stereo lens centers is `57.5mm`; pass it with `--baseline-override 57.5` so depth scale uses the real baseline instead of the solved calibration baseline.
+
+`config.yaml` contains two crosshair alignment systems:
+
+- `pitch_compensation.points`: fallback pitch-to-Y correction when stereo depth is unavailable.
+- `depth_crosshair_compensation`: depth-based Y correction for the vertical camera-to-laser offset.
+
+Current laser geometry:
+
+```yaml
+depth_crosshair_compensation:
+  enabled: true
+  laser_vertical_offset_mm: 55.0
+  reference_distance_mm: 1000.0
+  max_adjust_px: 80.0
+```
+
+Positive `laser_vertical_offset_mm` means the laser exits below the camera center. The correction moves the crosshair down for closer targets and up for farther targets, relative to the `reference_distance_mm`.
+
 **Access web interface:** `http://localhost:8000`
 
 **Performance Notes:**
 - `imgsz=640`: ~7 FPS on Jetson Nano (default)
 - `imgsz=1024`: ~2-4 FPS on Jetson Nano (more accurate)
 - Start with 640 and test higher sizes based on your needs
+
+#### Stereo Recalibration
+
+Capture stereo checkerboard pairs with the web helper. The helper only saves stereo pairs when the checkerboard is detected in both cameras.
+
+```bash
+uv run --extra jetson python capture_calibration.py \
+  --web \
+  --use-csi \
+  --stereo \
+  --pattern 6x4 \
+  --output calibration_images_recal \
+  --port 8010
+```
+
+Open `http://<jetson-ip>:8010`, capture 40-60 good stereo pairs, then calibrate. Use the measured square size for `--square-size`; the last screen-based calibration used `21mm`.
+
+```bash
+uv run --extra jetson python calibrate_camera.py \
+  --stereo \
+  --left "calibration_images_recal/left/*.jpg" \
+  --right "calibration_images_recal/right/*.jpg" \
+  --pattern 6x4 \
+  --square-size 21 \
+  --output calibration_output_recal
+```
+
+The current recalibration produced:
+
+```text
+Left RMS: 0.065px
+Right RMS: 0.046px
+Stereo RMS: 1.486px
+Solved baseline: 42.61mm
+Measured baseline override: 57.5mm
+```
+
+Stereo RMS is usable for testing but still high; a rigid printed target and more varied poses should improve it.
 
 ## Project Structure
 
@@ -329,4 +419,3 @@ export GOOGLE_APPLICATION_CREDENTIALS='/path/to/key.json'
 export GCP_PROJECT_ID='your-project-id'
 export GCP_LOCATION='us-central1'
 ```
-

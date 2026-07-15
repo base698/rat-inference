@@ -138,6 +138,18 @@ if CONFIG and 'tracking' in CONFIG:
     PITCH_COMP_MAX = CONFIG['tracking']['pitch_compensation']['pitch_max']
     Y_OFFSET_AT_MIN = CONFIG['tracking']['pitch_compensation']['y_offset_at_min']
     Y_OFFSET_AT_MAX = CONFIG['tracking']['pitch_compensation']['y_offset_at_max']
+    PITCH_COMP_POINTS = sorted(
+        [
+            (float(point['pitch']), float(point['offset']))
+            for point in CONFIG['tracking']['pitch_compensation'].get('points', [])
+        ],
+        key=lambda point: point[0]
+    )
+    depth_comp_config = CONFIG['tracking'].get('depth_crosshair_compensation', {})
+    DEPTH_CROSSHAIR_COMPENSATION_ENABLED = depth_comp_config.get('enabled', False)
+    LASER_VERTICAL_OFFSET_MM = float(depth_comp_config.get('laser_vertical_offset_mm', 55.0))
+    LASER_REFERENCE_DISTANCE_MM = float(depth_comp_config.get('reference_distance_mm', 1000.0))
+    LASER_MAX_ADJUST_PX = float(depth_comp_config.get('max_adjust_px', 80.0))
 else:
     # Default values (fallback)
     TARGET_CROSSHAIR_X_BASE = 298
@@ -155,6 +167,11 @@ else:
     PITCH_COMP_MAX = 550
     Y_OFFSET_AT_MIN = 0
     Y_OFFSET_AT_MAX = -120
+    PITCH_COMP_POINTS = []
+    DEPTH_CROSSHAIR_COMPENSATION_ENABLED = False
+    LASER_VERTICAL_OFFSET_MM = 55.0
+    LASER_REFERENCE_DISTANCE_MM = 1000.0
+    LASER_MAX_ADJUST_PX = 80.0
 
 
 def get_target_crosshair_x(current_yaw):
@@ -238,6 +255,18 @@ def get_target_crosshair_y(current_pitch, camera_bore_offset_mm=82, focal_length
         # Offset in pixels = (f * 82mm) / distance
         # We use assumed distance for now (can be updated when stereo provides real distance)
         y_offset = (focal_length_px * camera_bore_offset_mm) / assumed_distance_mm
+    elif PITCH_COMP_POINTS:
+        if pitch_raw <= PITCH_COMP_POINTS[0][0]:
+            y_offset = PITCH_COMP_POINTS[0][1]
+        elif pitch_raw >= PITCH_COMP_POINTS[-1][0]:
+            y_offset = PITCH_COMP_POINTS[-1][1]
+        else:
+            y_offset = Y_OFFSET_AT_MIN
+            for (pitch_a, offset_a), (pitch_b, offset_b) in zip(PITCH_COMP_POINTS, PITCH_COMP_POINTS[1:]):
+                if pitch_a <= pitch_raw <= pitch_b:
+                    segment_t = (pitch_raw - pitch_a) / (pitch_b - pitch_a)
+                    y_offset = offset_a + segment_t * (offset_b - offset_a)
+                    break
     else:
         # Fallback to empirical linear interpolation if focal length not available
         y_offset = Y_OFFSET_AT_MIN + t * (Y_OFFSET_AT_MAX - Y_OFFSET_AT_MIN)
@@ -513,6 +542,9 @@ class CameraTracker:
         self.stereo_map_left = None
         self.stereo_map_right = None
         self.stereo_focal_length = None
+        self.stereo_min_disparity = 0
+        self.stereo_num_disparities = 192
+        self.stereo_disparity_sign = 1
         self.last_depth_debug = "not computed"
 
         if self.calibration_file:
@@ -607,11 +639,11 @@ class CameraTracker:
                 self.dist_coeffs = self.D1
                 self.init_stereo_rectification()
 
-                # Create stereo matcher for disparity calculation
-                # StereoSGBM is more accurate than StereoBM
+                # Create stereo matcher for disparity calculation.
+                # StereoSGBM is more accurate than StereoBM.
                 self.stereo_matcher = cv2.StereoSGBM_create(
-                    minDisparity=0,
-                    numDisparities=16*6,  # Must be divisible by 16
+                    minDisparity=self.stereo_min_disparity,
+                    numDisparities=self.stereo_num_disparities,  # Must be divisible by 16
                     blockSize=5,
                     P1=8 * 3 * 5**2,  # Smoothness penalty
                     P2=32 * 3 * 5**2,
@@ -666,8 +698,20 @@ class CameraTracker:
                 image_size,
                 self.R, self.T,
                 flags=cv2.CALIB_ZERO_DISPARITY,
-                alpha=0
+                alpha=-1
             )
+
+            center_point = np.array([[[image_size[0] / 2.0, image_size[1] / 2.0]]], dtype=np.float32)
+            rectified_center = cv2.undistortPoints(
+                center_point, self.K1, self.D1, R=self.R1, P=self.P1
+            )[0, 0]
+            rectified_shift_x = (image_size[0] / 2.0) - float(rectified_center[0])
+            rectified_shift_y = (image_size[1] / 2.0) - float(rectified_center[1])
+            if abs(rectified_shift_x) > 1.0 or abs(rectified_shift_y) > 1.0:
+                self.P1[0, 2] += rectified_shift_x
+                self.P2[0, 2] += rectified_shift_x
+                self.P1[1, 2] += rectified_shift_y
+                self.P2[1, 2] += rectified_shift_y
 
             self.stereo_map_left = cv2.initUndistortRectifyMap(
                 self.K1, self.D1, self.R1, self.P1, image_size, cv2.CV_16SC2
@@ -681,9 +725,22 @@ class CameraTracker:
             if self.baseline_override is None:
                 self.baseline = rectified_baseline
 
+            # P2[0,3] sign tells us which disparity direction to expect after rectification.
+            # Some camera orderings produce negative valid disparities.
+            if float(self.P2[0, 3]) > 0:
+                self.stereo_disparity_sign = -1
+                self.stereo_min_disparity = -192
+                self.stereo_num_disparities = 256
+            else:
+                self.stereo_disparity_sign = 1
+                self.stereo_min_disparity = 0
+                self.stereo_num_disparities = 192
+
             print("✓ Stereo rectification initialized")
             print(f"  Rectified focal length: {self.stereo_focal_length:.2f}px")
             print(f"  Rectified baseline: {rectified_baseline:.2f} mm")
+            print(f"  Rectified image shift: x={rectified_shift_x:.1f}px, y={rectified_shift_y:.1f}px")
+            print(f"  Disparity search: min={self.stereo_min_disparity}, num={self.stereo_num_disparities}, sign={self.stereo_disparity_sign:+d}")
         except Exception as e:
             print(f"⚠ Failed to initialize stereo rectification: {e}")
             self.stereo_calibration_enabled = False
@@ -784,9 +841,12 @@ class CameraTracker:
                 y1 = max(0, y - radius)
                 y2 = min(disparity.shape[0], y + radius + 1)
                 window = disparity[y1:y2, x1:x2]
-                valid = window[window > 0]
+                if self.stereo_disparity_sign < 0:
+                    valid = window[(window < -1) & (window >= self.stereo_min_disparity)]
+                else:
+                    valid = window[window > 0]
                 if valid.size >= 8:
-                    d = float(np.median(valid))
+                    d = abs(float(np.median(valid)))
                     break
 
             if d is None:
@@ -1119,12 +1179,26 @@ class CameraTracker:
 
         # Calculate depth at crosshair if stereo is available
         crosshair_depth_m = None
+        depth_adjust_px = 0.0
         depth_text = None
         depth_color = (0, 255, 0)
         if self.stereo_calibration_enabled and frame_right is not None:
             depth_mm = self.calculate_depth(frame, frame_right, ch_x, ch_y)
             if depth_mm is not None:
                 crosshair_depth_m = depth_mm / 1000.0  # Convert to meters
+                if DEPTH_CROSSHAIR_COMPENSATION_ENABLED and LASER_REFERENCE_DISTANCE_MM > 0:
+                    focal_y = None
+                    if self.K1 is not None:
+                        focal_y = float(self.K1[1, 1])
+                    elif self.camera_matrix is not None:
+                        focal_y = float(self.camera_matrix[1, 1])
+
+                    if focal_y is not None:
+                        depth_adjust_px = focal_y * LASER_VERTICAL_OFFSET_MM * (
+                            (1.0 / depth_mm) - (1.0 / LASER_REFERENCE_DISTANCE_MM)
+                        )
+                        depth_adjust_px = max(-LASER_MAX_ADJUST_PX, min(LASER_MAX_ADJUST_PX, depth_adjust_px))
+                        ch_y = int(round(ch_y + depth_adjust_px))
                 depth_text = f"{crosshair_depth_m:.2f}m"
             else:
                 depth_text = f"-- {self.last_depth_debug}"
@@ -1135,7 +1209,7 @@ class CameraTracker:
 
         if self._frame_counter % 30 == 0:  # Print once per second
             depth_debug = depth_text if depth_text is not None else "n/a"
-            print(f"[DEBUG] Yaw: {self.current_yaw}, Pitch: {self.current_pitch}, Crosshair: ({ch_x}, {ch_y}), Depth: {depth_debug}")
+            print(f"[DEBUG] Yaw: {self.current_yaw}, Pitch: {self.current_pitch}, Crosshair: ({ch_x}, {ch_y}), Depth: {depth_debug}, DepthYAdjust: {depth_adjust_px:.1f}px")
 
         # Crosshair lines in green (BGR format)
         cv2.line(frame, (ch_x - ch_size, ch_y), (ch_x + ch_size, ch_y), (0, 255, 0), 2)
