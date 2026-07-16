@@ -1752,7 +1752,7 @@ def main():
         args.disable_detection = True
 
     if args.stereo and args.calibration == "camera_calibration.npz":
-        default_stereo_calibration = "calibration_output/stereo_calibration.npz"
+        default_stereo_calibration = "calibration_output_recal/stereo_calibration.npz"
         if os.path.exists(default_stereo_calibration):
             args.calibration = default_stereo_calibration
 

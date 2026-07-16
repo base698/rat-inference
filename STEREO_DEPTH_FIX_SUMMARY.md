@@ -238,6 +238,34 @@ config.yaml.bak-20260715-pitch-points
 config.yaml.bak-20260715-depth-crosshair
 ```
 
+## Repository Cleanup Status
+
+Phase 1 tagged the known-good starting point as:
+
+```text
+pre-cleanup-working-main-20260716
+```
+
+Phase 2 organized the utility scripts into stable locations under `tools/` and moved reusable vision helpers into `ratbot/vision/`, while leaving root-level compatibility wrappers in place.
+
+The bad original calibration artifact set has now been removed:
+
+```text
+calibration_output/
+calibration_images/
+```
+
+The current source-of-truth calibration set is tracked in git:
+
+```text
+calibration_images_recal/
+calibration_output_recal/
+```
+
+`rt_200.py` now auto-selects `calibration_output_recal/stereo_calibration.npz` when stereo mode is enabled and no explicit calibration path is provided. Runtime should still pass `--baseline-override 57.5` because the measured physical lens-center baseline is more trustworthy than the solved baseline from the screen-based calibration.
+
+Phase 3 is the modularization pass: keep `rt_200.py` usable as the CLI entry point, but extract the robot/camera/stereo/web pieces into importable modules so the controller can be reused with another stereo camera and 2-axis servo robot.
+
 ## Remaining Notes
 
 - The current stereo depth seems plausible but the stereo RMS is still `1.486px`, so a rigid printed calibration target should improve accuracy.
