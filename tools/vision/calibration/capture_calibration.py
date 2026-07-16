@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -717,12 +717,12 @@ def main():
         epilog="""
 Examples:
   # Web server mode (recommended - view in browser)
-  python tools/calibration/capture_calibration.py --web --camera 0 --output calib_images
-  python tools/calibration/capture_calibration.py --web --use-csi --stereo --output calib_stereo
+  python tools/vision/calibration/capture_calibration.py --web --camera 0 --output calib_images
+  python tools/vision/calibration/capture_calibration.py --web --use-csi --stereo --output calib_stereo
 
   # Headless text mode
-  python tools/calibration/capture_calibration.py --camera 0 --output calib_images
-  python tools/calibration/capture_calibration.py --use-csi --stereo --output calib_stereo
+  python tools/vision/calibration/capture_calibration.py --camera 0 --output calib_images
+  python tools/vision/calibration/capture_calibration.py --use-csi --stereo --output calib_stereo
         """
     )
 

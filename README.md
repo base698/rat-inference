@@ -48,22 +48,22 @@ Generate training images from reference photos using Vertex AI Gemini:
 
 ```bash
 # Single prompt with validation
-uv run python tools/dataset/generate-dataset.py \
+uv run python tools/vision/dataset/generate-dataset.py \
   --reference ref.jpg \
   --prompt "Make a rat appear facing right in the middle of screen" \
   --dataset rat \
   --validate
 
 # Multiple prompts from file
-uv run python tools/dataset/generate-dataset.py \
+uv run python tools/vision/dataset/generate-dataset.py \
   --reference ref.jpg \
-  --prompts-file sample-prompts.txt \
+  --prompts-file tools/vision/sample-prompts.txt \
   --dataset rat \
   --count 10 \
   --validate
 
 # Multiple custom prompts
-uv run python tools/dataset/generate-dataset.py \
+uv run python tools/vision/dataset/generate-dataset.py \
   --reference ref.jpg \
   --prompt "Add a rat in the center" \
   --prompt "Add a rat on the left side" \
@@ -81,13 +81,13 @@ Train a custom YOLO model with configurable image size:
 
 ```bash
 # Train with default settings (640px)
-uv run python tools/training/train.py --model-size n --epochs 100
+uv run python tools/vision/training/train.py --model-size n --epochs 100
 
 # Train with larger image size (1024px)
-uv run python tools/training/train.py --model-size n --epochs 100 --imgsz 1024
+uv run python tools/vision/training/train.py --model-size n --epochs 100 --imgsz 1024
 
 # Train with medium model
-uv run python tools/training/train.py --model-size m --epochs 150 --batch 16 --imgsz 640
+uv run python tools/vision/training/train.py --model-size m --epochs 150 --batch 16 --imgsz 640
 ```
 
 **Training Tips:**
@@ -102,13 +102,13 @@ Run inference on images or videos:
 
 ```bash
 # Single image with default size (640)
-uv run python tools/inference/inference.py --input image.jpg --model runs/best.pt --show
+uv run python tools/vision/inference/inference.py --input image.jpg --model runs/best.pt --show
 
 # Video with larger inference size (1024)
-uv run python tools/inference/inference.py --input video.mp4 --model runs/best.pt --imgsz 1024 --save
+uv run python tools/vision/inference/inference.py --input video.mp4 --model runs/best.pt --imgsz 1024 --save
 
 # Custom confidence threshold
-uv run python tools/inference/inference.py --input image.jpg --model runs/best.pt --conf 0.5 --imgsz 640
+uv run python tools/vision/inference/inference.py --input image.jpg --model runs/best.pt --conf 0.5 --imgsz 640
 ```
 
 **Parameters:**
@@ -151,7 +151,7 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --disable-detection \
   --stereo \
-  --calibration calibration_output_recal/stereo_calibration.npz \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5 \
   --port /dev/ttyACM0
 ```
@@ -167,7 +167,7 @@ uv run --extra jetson python rt_200.py \
   --disable-servos \
   --no-connect \
   --stereo \
-  --calibration calibration_output_recal/stereo_calibration.npz \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5
 
 # Simple video-only CSI stream, no servos, no detection
@@ -205,25 +205,25 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 Capture stereo checkerboard pairs with the web helper. The helper only saves stereo pairs when the checkerboard is detected in both cameras.
 
 ```bash
-uv run --extra jetson python tools/calibration/capture_calibration.py \
+uv run --extra jetson python tools/vision/calibration/capture_calibration.py \
   --web \
   --use-csi \
   --stereo \
   --pattern 6x4 \
-  --output calibration_images_recal \
+  --output tools/vision/calibration/images_recal \
   --port 8010
 ```
 
 Open `http://<jetson-ip>:8010`, capture 40-60 good stereo pairs, then calibrate. Use the measured square size for `--square-size`; the last screen-based calibration used `21mm`.
 
 ```bash
-uv run --extra jetson python tools/calibration/calibrate_camera.py \
+uv run --extra jetson python tools/vision/calibration/calibrate_camera.py \
   --stereo \
-  --left "calibration_images_recal/left/*.jpg" \
-  --right "calibration_images_recal/right/*.jpg" \
+  --left "tools/vision/calibration/images_recal/left/*.jpg" \
+  --right "tools/vision/calibration/images_recal/right/*.jpg" \
   --pattern 6x4 \
   --square-size 21 \
-  --output calibration_output_recal
+  --output tools/vision/calibration/output_recal
 ```
 
 The current recalibration produced:
@@ -249,19 +249,18 @@ rat-inference/
 │       ├── csi_camera.py      # CSI camera capture helper
 │       └── yolo_inference.py  # Shared YOLO inference helpers
 ├── tools/
-│   ├── calibration/           # Camera calibration capture and solve tools
-│   ├── dataset/               # Dataset generation, labeling, and cleanup
 │   ├── hardware/              # Servo, motor, and GPIO diagnostics
-│   ├── inference/             # Image/video YOLO inference CLI
-│   └── training/              # YOLO training CLI
+│   └── vision/
+│       ├── calibration/       # Camera calibration capture, images, and solved outputs
+│       ├── dataset/           # Dataset generation, labeling, and cleanup
+│       ├── inference/         # Image/video YOLO inference CLI
+│       ├── training/          # YOLO training CLI
+│       ├── legacy/            # Older image/Roboflow experiments
+│       ├── assets/            # Sample/reference images
+│       └── sample-prompts.txt # Example prompts for generation
 ├── archive/
 │   └── raspberry-pi/
 │       └── rt_100.py          # Legacy Raspberry Pi tracking/trap script
-├── main.py                    # Legacy Roboflow inference
-├── *_test.py                  # Compatibility wrappers for moved tools
-├── train.py                   # Compatibility wrapper
-├── inference.py               # Compatibility wrapper
-├── sample-prompts.txt         # Example prompts for generation
 ├── datasets/                  # Training datasets
 │   └── rat/
 │       ├── images/            # Training images
@@ -278,7 +277,7 @@ Key Files:
 - TRAINING_GUIDE.md - Model training instructions
 ```
 
-Root-level utility script names are kept as compatibility wrappers for now. Prefer the `tools/...` paths for new commands.
+Root-level utility wrappers have been removed. Use the `tools/hardware/...` and `tools/vision/...` paths for utility commands.
 
 ## Dependency Management
 
@@ -310,7 +309,7 @@ uv sync --extra dataset --extra optimize
 uv sync --extra all
 ```
 
-**Important:** `main.py` (Roboflow inference) conflicts with `lerobot` and must be run in a separate venv.
+**Important:** `tools/vision/legacy/main.py` (Roboflow inference) conflicts with `lerobot` and must be run in a separate venv.
 
 See `DEPENDENCIES.md` for complete details.
 
@@ -320,12 +319,12 @@ All inference and training scripts now support the `--imgsz` parameter:
 
 ```bash
 # Training
-python tools/training/train.py --imgsz 640   # Default
-python tools/training/train.py --imgsz 1024  # Higher accuracy (requires retraining)
+python tools/vision/training/train.py --imgsz 640   # Default
+python tools/vision/training/train.py --imgsz 1024  # Higher accuracy (requires retraining)
 
 # Inference
-python tools/inference/inference.py --imgsz 640   # Default
-python tools/inference/inference.py --imgsz 1024  # Larger inference size
+python tools/vision/inference/inference.py --imgsz 640   # Default
+python tools/vision/inference/inference.py --imgsz 1024  # Larger inference size
 
 # Real-time tracking
 python rt_200.py --imgsz 640   # Default, ~7 FPS on Jetson

@@ -171,13 +171,13 @@ def main():
         epilog="""
 Examples:
   # Generate single image with validation
-  python tools/dataset/generate-dataset.py --reference ref.jpg --prompt "Make a rat appear facing right in the middle" --dataset rat --validate
+  python tools/vision/dataset/generate-dataset.py --reference ref.jpg --prompt "Make a rat appear facing right in the middle" --dataset rat --validate
 
   # Generate multiple variations without validation
-  python tools/dataset/generate-dataset.py --reference ref.jpg --prompts prompts.txt --dataset rat --count 10
+  python tools/vision/dataset/generate-dataset.py --reference ref.jpg --prompts prompts.txt --dataset rat --count 10
 
   # Use custom prompts directly
-  python tools/dataset/generate-dataset.py --reference ref.jpg --prompt "Add a rat in the center" --prompt "Add a rat on the left side" --dataset rat
+  python tools/vision/dataset/generate-dataset.py --reference ref.jpg --prompt "Add a rat in the center" --prompt "Add a rat on the left side" --dataset rat
         """
     )
 

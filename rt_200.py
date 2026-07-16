@@ -15,7 +15,7 @@ import yaml
 from datetime import datetime
 import uvicorn
 import numpy as np
-from yolo_inference import run_inference as yolo_run_inference, extract_detections
+from ratbot.vision.yolo_inference import run_inference as yolo_run_inference, extract_detections
 from ratbot.robot import (
     CrosshairAiming,
     DepthCrosshairCompensation,
@@ -37,7 +37,7 @@ except ImportError:
 
 # Try importing CSI camera helper
 try:
-    from csi_camera_capture import CSICameraCapture
+    from ratbot.vision.csi_camera import CSICameraCapture
     CSI_HELPER_AVAILABLE = True
 except ImportError:
     CSI_HELPER_AVAILABLE = False
@@ -1535,7 +1535,7 @@ def main():
         args.disable_detection = True
 
     if args.stereo and args.calibration == "camera_calibration.npz":
-        default_stereo_calibration = "calibration_output_recal/stereo_calibration.npz"
+        default_stereo_calibration = "tools/vision/calibration/output_recal/stereo_calibration.npz"
         if os.path.exists(default_stereo_calibration):
             args.calibration = default_stereo_calibration
 

@@ -48,5 +48,5 @@ all = [
     "onnx>=1.19.0",
 ]
 
-# Note: main.py uses Roboflow's 'inference' package which conflicts with lerobot.
-# If you need to run main.py, create a separate venv and install inference package there.
+# Note: tools/vision/legacy/main.py uses Roboflow's 'inference' package which conflicts with lerobot.
+# If you need to run tools/vision/legacy/main.py, create a separate venv and install inference package there.

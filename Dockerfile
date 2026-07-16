@@ -26,18 +26,10 @@ RUN python3 -m pip install --upgrade pip && \
 RUN pip install feetech-servo-sdk
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY config.yaml ./
-COPY yolo_inference.py ./
-COPY calibration_output/stereo_calibration.npz ./camera_calibration.npz
 COPY pyproject.toml ./
-COPY inference.py ./
 COPY rt_200.py ./
-COPY csi_camera_capture.py ./
-COPY servo_test_sysfs.py ./
-COPY trigger_position_test.py ./
-COPY pitch_test.py ./
-
-# Copy model files
-COPY *.pt ./
+COPY ratbot ./ratbot
+COPY tools ./tools
 
 # Copy runs directory with trained models
 COPY runs ./runs
@@ -52,5 +44,5 @@ RUN mkdir -p detections
 EXPOSE 8000
 
 # Default command runs the rt_200.py server with stereo mode
-# Users can override this to run inference.py instead
+# Users can override this to run tools/vision/inference/inference.py instead
 CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--stereo", "--model", "runs/yolo11n-2025-10-24/weights/best.pt"]

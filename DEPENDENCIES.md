@@ -20,7 +20,7 @@ uv sync --extra dataset
 Installs: `google-cloud-aiplatform`
 
 **Use for:**
-- Running `tools/dataset/generate-dataset.py`
+- Running `tools/vision/dataset/generate-dataset.py`
 - Generating training images with Vertex AI Gemini
 
 #### `jetson` - For Jetson Nano deployment
@@ -57,7 +57,7 @@ Installs all non-conflicting optional dependencies.
 uv sync --extra dataset
 
 # Generate training images
-uv run python tools/dataset/generate-dataset.py --reference ref.jpg --prompt "Add a rat in center" --dataset rat --validate
+uv run python tools/vision/dataset/generate-dataset.py --reference ref.jpg --prompt "Add a rat in center" --dataset rat --validate
 ```
 
 ### Model Training (Development Machine)
@@ -66,10 +66,10 @@ uv run python tools/dataset/generate-dataset.py --reference ref.jpg --prompt "Ad
 uv sync
 
 # Train model
-uv run python tools/training/train.py --model-size n --epochs 100 --imgsz 640
+uv run python tools/vision/training/train.py --model-size n --epochs 100 --imgsz 640
 
 # Run inference
-uv run python tools/inference/inference.py --input test.jpg --model runs/best.pt --imgsz 640
+uv run python tools/vision/inference/inference.py --input test.jpg --model runs/best.pt --imgsz 640
 ```
 
 ### Jetson Nano Deployment
@@ -87,23 +87,23 @@ uv run python rt_200.py --enable-camera --use-csi --enable-trigger --imgsz 640
 uv sync --extra dataset --extra optimize
 
 # Generate data
-uv run python tools/dataset/generate-dataset.py --reference ref.jpg --prompts-file prompts.txt --dataset rat --count 10
+uv run python tools/vision/dataset/generate-dataset.py --reference ref.jpg --prompts-file prompts.txt --dataset rat --count 10
 
 # Train model
-uv run python tools/training/train.py --imgsz 640
+uv run python tools/vision/training/train.py --imgsz 640
 ```
 
 ## Important Notes
 
-### About main.py (Legacy)
-`main.py` uses Roboflow's `inference` package which **conflicts** with `lerobot` (used in rt_200.py).
+### About tools/vision/legacy/main.py (Legacy)
+`tools/vision/legacy/main.py` uses Roboflow's `inference` package which **conflicts** with `lerobot` (used in rt_200.py).
 
-If you need to run `main.py`, create a separate virtual environment:
+If you need to run `tools/vision/legacy/main.py`, create a separate virtual environment:
 ```bash
 python -m venv venv-legacy
 source venv-legacy/bin/activate
 pip install inference supervision pillow
-python main.py
+python tools/vision/legacy/main.py
 ```
 
 ### Dependency Conflicts
@@ -128,5 +128,5 @@ uv pip list
 
 ### Run without installing
 ```bash
-uv run --extra dataset python tools/dataset/generate-dataset.py --help
+uv run --extra dataset python tools/vision/dataset/generate-dataset.py --help
 ```

@@ -14,9 +14,9 @@ The baseline commit preserves the current working stereo runtime inputs that wer
 
 - `config.yaml` with `tracking.crosshair.y_base: 371`
 - `STEREO_DEPTH_FIX_SUMMARY.md`
-- `calibration_output_recal/stereo_calibration.npz`
-- `calibration_output_recal/left/camera_calibration.npz`
-- `calibration_output_recal/right/camera_calibration.npz`
+- `tools/vision/calibration/output_recal/stereo_calibration.npz`
+- `tools/vision/calibration/output_recal/left/camera_calibration.npz`
+- `tools/vision/calibration/output_recal/right/camera_calibration.npz`
 
 To return to the known-good pre-cleanup state:
 
@@ -42,7 +42,7 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --disable-detection \
   --stereo \
-  --calibration calibration_output_recal/stereo_calibration.npz \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5 \
   --port /dev/ttyACM0
 ```
@@ -85,7 +85,7 @@ Detection/inference scripts:
 
 - `yolo_inference.py`: reusable YOLO inference helper candidate.
 - `inference.py`: older inference entry point candidate for review.
-- `main.py`: likely older Roboflow/demo-style entry point candidate for archive/removal review.
+- `tools/vision/legacy/main.py`: likely older Roboflow/demo-style entry point candidate for archive/removal review.
 
 Scratch or review-before-removal files:
 
@@ -105,9 +105,9 @@ Proposed module targets:
 - `ratbot/robot/`: pan/tilt interfaces, Feetech implementation, trigger interfaces, GPIO trigger, simulation, geometry.
 - `ratbot/web/`: FastAPI app factory, API schemas, static UI.
 - `ratbot/workflows/`: tracker orchestration and trap workflow.
-- `tools/calibration/`: calibration capture and calibration CLIs.
+- `tools/vision/calibration/`: calibration capture and calibration CLIs.
 - `tools/hardware/`: motor, GPIO, pitch, and trigger diagnostic CLIs.
-- `tools/dataset/`: labeler, cleaner, frame extraction, dataset generation.
+- `tools/vision/dataset/`: labeler, cleaner, frame extraction, dataset generation.
 
 The reusable controller shape should let the web interface run against any robot implementation that provides:
 

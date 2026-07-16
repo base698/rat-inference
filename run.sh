@@ -12,7 +12,7 @@ usage() {
     echo "Commands:"
     echo "  build          - Build the Docker image"
     echo "  rt200          - Run rt_200.py server (default, with web UI on port 8000)"
-    echo "  inference      - Run inference.py for testing"
+    echo "  inference      - Run tools/vision/inference/inference.py for testing"
     echo "  servo-test     - Test servo using hardware PWM (sysfs)"
     echo "  trigger-test   - Interactive trigger servo position test (type numbers, 'q' to quit)"
     echo "  pitch-test     - Test pitch motor (read/write position)"
@@ -72,9 +72,9 @@ run_rt200() {
     echo "To stop: docker stop rat-inference"
 }
 
-# Run inference.py
+# Run the vision inference CLI
 run_inference() {
-    echo "Running inference.py..."
+    echo "Running tools/vision/inference/inference.py..."
 
     # Convert local file paths to container paths
     ARGS=()
@@ -108,7 +108,7 @@ run_inference() {
         --runtime=nvidia \
         -v $(pwd):/app/data \
         $IMAGE_NAME \
-        python3 inference.py \
+        python3 tools/vision/inference/inference.py \
             --model runs/yolo11n-2025-10-24/weights/best.pt \
             "${ARGS[@]}"
 }
@@ -124,7 +124,7 @@ test_servo() {
         --runtime=nvidia \
         -v /sys:/sys \
         $IMAGE_NAME \
-        python3 servo_test_sysfs.py "$@"
+        python3 tools/hardware/servo_test_sysfs.py "$@"
 }
 
 # Test pitch motor (Feetech)
@@ -136,7 +136,7 @@ test_pitch() {
         --runtime=nvidia \
         --device=/dev/ttyACM0:/dev/ttyACM0 \
         $IMAGE_NAME \
-        python3 pitch_test.py "$@"
+        python3 tools/hardware/pitch_test.py "$@"
 }
 
 # Test trigger servo positions (interactive)
@@ -149,7 +149,7 @@ test_trigger() {
         --runtime=nvidia \
         -v /sys:/sys \
         $IMAGE_NAME \
-        python3 trigger_position_test.py "$@"
+        python3 tools/hardware/trigger_position_test.py "$@"
 }
 
 # Scan for motors and change IDs
@@ -161,7 +161,7 @@ scan_motors() {
         --runtime=nvidia \
         --device=/dev/ttyACM0:/dev/ttyACM0 \
         $IMAGE_NAME \
-        python3 find_motors.py "$@"
+        python3 tools/hardware/find_motors.py "$@"
 }
 
 # Open a shell in the container

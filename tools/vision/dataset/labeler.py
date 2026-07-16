@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
@@ -10,12 +11,12 @@ from PIL import Image, ImageTk
 
 
 class RatLabeler:
-    def __init__(self, root):
+    def __init__(self, root, base_dir="datasets/rat"):
         self.root = root
         self.root.title("Rat Image Labeler")
         self.root.geometry("1200x800")
 
-        self.base_dir = Path("datasets/rat")
+        self.base_dir = Path(base_dir)
         self.unsorted_dir = self.base_dir / "unsorted"
         self.train_images_dir = self.base_dir / "images" / "train"
         self.val_images_dir = self.base_dir / "images" / "val"
@@ -352,8 +353,16 @@ class RatLabeler:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Label rat images into YOLO train/val datasets.")
+    parser.add_argument(
+        "--dataset-root",
+        default="datasets/rat",
+        help="Dataset root containing unsorted/, images/, and labels/ directories.",
+    )
+    args = parser.parse_args()
+
     root = tk.Tk()
-    app = RatLabeler(root)
+    app = RatLabeler(root, base_dir=args.dataset_root)
     root.mainloop()
 
 

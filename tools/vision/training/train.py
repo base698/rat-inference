@@ -244,7 +244,7 @@ def main():
 
     # Provide inference example
     print("\nTo run inference with the trained model:")
-    print(f"python tools/inference/inference.py --model {results.save_dir}/weights/best.pt --input <image_path>")
+    print(f"python tools/vision/inference/inference.py --model {results.save_dir}/weights/best.pt --input <image_path>")
 
 if __name__ == "__main__":
     main()

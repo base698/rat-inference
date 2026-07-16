@@ -324,16 +324,16 @@ def main():
         epilog="""
 Examples:
   # Single camera calibration
-  python tools/calibration/calibrate_camera.py --input "calib_images/*.jpg" --pattern 9x6
+  python tools/vision/calibration/calibrate_camera.py --input "calib_images/*.jpg" --pattern 9x6
 
   # Stereo camera calibration
-  python tools/calibration/calibrate_camera.py --stereo \\
+  python tools/vision/calibration/calibrate_camera.py --stereo \\
       --left "calib_stereo/left/*.jpg" \\
       --right "calib_stereo/right/*.jpg" \\
       --pattern 9x6
 
   # With custom square size (in mm)
-  python tools/calibration/calibrate_camera.py --input "calib/*.jpg" --pattern 9x6 --square-size 40
+  python tools/vision/calibration/calibrate_camera.py --input "calib/*.jpg" --pattern 9x6 --square-size 40
         """
     )
 

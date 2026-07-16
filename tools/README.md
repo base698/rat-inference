@@ -1,11 +1,11 @@
 # Tool Layout
 
-The root-level utility scripts are compatibility wrappers. Prefer these canonical paths for new commands:
+Use these canonical paths for utility commands. Root-level compatibility wrappers have been removed.
 
 ## Calibration
 
-- `tools/calibration/capture_calibration.py`: capture mono or stereo checkerboard images.
-- `tools/calibration/calibrate_camera.py`: solve mono or stereo camera calibration from captured images.
+- `tools/vision/calibration/capture_calibration.py`: capture mono or stereo checkerboard images.
+- `tools/vision/calibration/calibrate_camera.py`: solve mono or stereo camera calibration from captured images.
 
 ## Hardware
 
@@ -17,9 +17,9 @@ The root-level utility scripts are compatibility wrappers. Prefer these canonica
 
 ## Dataset And Training
 
-- `tools/dataset/generate-dataset.py`: generate candidate training images.
-- `tools/dataset/labeler.py`: label images for YOLO training.
-- `tools/dataset/dataset_cleaner.py`: review and clean generated datasets.
-- `tools/dataset/extract-frames.sh`: extract frames for dataset building.
-- `tools/training/train.py`: train a YOLO model.
-- `tools/inference/inference.py`: run image or video inference.
+- `tools/vision/dataset/generate-dataset.py`: generate candidate training images.
+- `tools/vision/dataset/labeler.py`: label images for YOLO training.
+- `tools/vision/dataset/dataset_cleaner.py`: review and clean generated datasets.
+- `tools/vision/dataset/extract-frames.sh`: extract frames for dataset building.
+- `tools/vision/training/train.py`: train a YOLO model.
+- `tools/vision/inference/inference.py`: run image or video inference.

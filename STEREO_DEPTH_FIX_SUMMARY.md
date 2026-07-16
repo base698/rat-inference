@@ -13,7 +13,7 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --disable-detection \
   --stereo \
-  --calibration calibration_output_recal/stereo_calibration.npz \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5 \
   --port /dev/ttyACM0
 ```
@@ -70,12 +70,12 @@ It caused severe rectification distortion and mapped normal image points far out
 Recalibration was done using a `6x4` internal-corner checkerboard displayed on a screen:
 
 ```bash
-uv run --extra jetson python capture_calibration.py \
+uv run --extra jetson python tools/vision/calibration/capture_calibration.py \
   --web \
   --use-csi \
   --stereo \
   --pattern 6x4 \
-  --output calibration_images_recal \
+  --output tools/vision/calibration/images_recal \
   --port 8010
 ```
 
@@ -84,13 +84,13 @@ The capture helper only saves stereo pairs when the checkerboard is detected in 
 Calibration command:
 
 ```bash
-uv run --extra jetson python calibrate_camera.py \
+uv run --extra jetson python tools/vision/calibration/calibrate_camera.py \
   --stereo \
-  --left "calibration_images_recal/left/*.jpg" \
-  --right "calibration_images_recal/right/*.jpg" \
+  --left "tools/vision/calibration/images_recal/left/*.jpg" \
+  --right "tools/vision/calibration/images_recal/right/*.jpg" \
   --pattern 6x4 \
   --square-size 21 \
-  --output calibration_output_recal
+  --output tools/vision/calibration/output_recal
 ```
 
 New calibration results:
@@ -208,7 +208,7 @@ uv run --extra jetson python rt_200.py \
   --disable-servos \
   --no-connect \
   --stereo \
-  --calibration calibration_output_recal/stereo_calibration.npz \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5
 ```
 
@@ -246,7 +246,7 @@ Phase 1 tagged the known-good starting point as:
 pre-cleanup-working-main-20260716
 ```
 
-Phase 2 organized the utility scripts into stable locations under `tools/` and moved reusable vision helpers into `ratbot/vision/`, while leaving root-level compatibility wrappers in place.
+Phase 2 organized the utility scripts into stable locations under `tools/` and moved reusable vision helpers into `ratbot/vision/`, while temporarily leaving root-level compatibility wrappers in place.
 
 The bad original calibration artifact set has now been removed:
 
@@ -258,11 +258,11 @@ calibration_images/
 The current source-of-truth calibration set is tracked in git:
 
 ```text
-calibration_images_recal/
-calibration_output_recal/
+tools/vision/calibration/images_recal/
+tools/vision/calibration/output_recal/
 ```
 
-`rt_200.py` now auto-selects `calibration_output_recal/stereo_calibration.npz` when stereo mode is enabled and no explicit calibration path is provided. Runtime should still pass `--baseline-override 57.5` because the measured physical lens-center baseline is more trustworthy than the solved baseline from the screen-based calibration.
+`rt_200.py` now auto-selects `tools/vision/calibration/output_recal/stereo_calibration.npz` when stereo mode is enabled and no explicit calibration path is provided. Runtime should still pass `--baseline-override 57.5` because the measured physical lens-center baseline is more trustworthy than the solved baseline from the screen-based calibration.
 
 Phase 3 is the modularization pass: keep `rt_200.py` usable as the CLI entry point, but extract the robot/camera/stereo/web pieces into importable modules so the controller can be reused with another stereo camera and 2-axis servo robot.
 
@@ -289,6 +289,18 @@ ratbot/robot/aiming.py
 ```
 
 `CrosshairAiming` now owns yaw-to-X compensation, pitch-to-Y compensation, pitch point interpolation, and stereo-depth laser Y adjustment. `rt_200.py` still exposes the existing `get_target_crosshair_x(...)` and `get_target_crosshair_y(...)` wrappers, so the web controller and tracker call sites remain stable while the robot package gains real reusable behavior.
+
+The follow-up cleanup consolidates all vision utility code and artifacts under:
+
+```text
+tools/vision/
+```
+
+That includes calibration scripts and outputs, dataset tools, training, inference, sample prompts, sample assets, and the legacy `main.py` image experiment. Root-level utility wrappers were removed after copying the old root layout to:
+
+```text
+/tmp/rat-inference-root-cleanup-20260716-125144
+```
 
 ## Remaining Notes
 

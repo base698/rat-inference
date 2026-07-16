@@ -10,50 +10,34 @@ Organize utility scripts into stable locations without changing runtime behavior
 
 - Added the `ratbot/` package as the future home for reusable robot and vision code.
 - Moved reusable vision helpers into `ratbot/vision/`.
-- Moved calibration tools into `tools/calibration/`.
+- Moved calibration tools into `tools/vision/calibration/`.
 - Moved hardware diagnostics into `tools/hardware/`.
-- Moved dataset and training tools into `tools/dataset/`, `tools/training/`, and `tools/inference/`.
-- Kept root-level compatibility wrappers for the previous script names.
+- Moved dataset and training tools into `tools/vision/dataset/`, `tools/vision/training/`, and `tools/vision/inference/`.
+- Kept root-level compatibility wrappers for the previous script names as a temporary migration bridge.
 
 ## Canonical Locations
 
 - `ratbot/vision/csi_camera.py`
 - `ratbot/vision/yolo_inference.py`
-- `tools/calibration/capture_calibration.py`
-- `tools/calibration/calibrate_camera.py`
+- `tools/vision/calibration/capture_calibration.py`
+- `tools/vision/calibration/calibrate_camera.py`
 - `tools/hardware/find_motors.py`
 - `tools/hardware/pitch_test.py`
 - `tools/hardware/gpio_test.py`
 - `tools/hardware/servo_test_sysfs.py`
 - `tools/hardware/trigger_position_test.py`
-- `tools/dataset/labeler.py`
-- `tools/dataset/dataset_cleaner.py`
-- `tools/dataset/generate-dataset.py`
-- `tools/dataset/extract-frames.sh`
-- `tools/training/train.py`
-- `tools/inference/inference.py`
+- `tools/vision/dataset/labeler.py`
+- `tools/vision/dataset/dataset_cleaner.py`
+- `tools/vision/dataset/generate-dataset.py`
+- `tools/vision/dataset/extract-frames.sh`
+- `tools/vision/training/train.py`
+- `tools/vision/inference/inference.py`
 
 ## Compatibility
 
-These root-level names remain as wrappers for now:
+At the end of Phase 2, root-level wrappers still existed so the move could be tested without changing command habits all at once.
 
-- `calibrate_camera.py`
-- `capture_calibration.py`
-- `csi_camera_capture.py`
-- `dataset_cleaner.py`
-- `extract-frames.sh`
-- `find_motors.py`
-- `generate-dataset.py`
-- `gpio_test.py`
-- `inference.py`
-- `labeler.py`
-- `pitch_test.py`
-- `servo_test_sysfs.py`
-- `train.py`
-- `trigger_position_test.py`
-- `yolo_inference.py`
-
-`rt_200.py` is intentionally unchanged in this phase. It still imports the root compatibility modules, which forward to `ratbot/vision`.
+Phase 6 removed those wrappers after the canonical `tools/hardware/...` and `tools/vision/...` paths were verified. `rt_200.py` now imports shared vision helpers directly from `ratbot/vision`.
 
 ## Next Phase
 
