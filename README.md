@@ -48,14 +48,14 @@ Generate training images from reference photos using Vertex AI Gemini:
 
 ```bash
 # Single prompt with validation
-uv run generate-dataset.py \
+uv run python tools/dataset/generate-dataset.py \
   --reference ref.jpg \
   --prompt "Make a rat appear facing right in the middle of screen" \
   --dataset rat \
   --validate
 
 # Multiple prompts from file
-uv run generate-dataset.py \
+uv run python tools/dataset/generate-dataset.py \
   --reference ref.jpg \
   --prompts-file sample-prompts.txt \
   --dataset rat \
@@ -63,7 +63,7 @@ uv run generate-dataset.py \
   --validate
 
 # Multiple custom prompts
-uv run generate-dataset.py \
+uv run python tools/dataset/generate-dataset.py \
   --reference ref.jpg \
   --prompt "Add a rat in the center" \
   --prompt "Add a rat on the left side" \
@@ -81,13 +81,13 @@ Train a custom YOLO model with configurable image size:
 
 ```bash
 # Train with default settings (640px)
-uv run python train.py --model-size n --epochs 100
+uv run python tools/training/train.py --model-size n --epochs 100
 
 # Train with larger image size (1024px)
-uv run python train.py --model-size n --epochs 100 --imgsz 1024
+uv run python tools/training/train.py --model-size n --epochs 100 --imgsz 1024
 
 # Train with medium model
-uv run python train.py --model-size m --epochs 150 --batch 16 --imgsz 640
+uv run python tools/training/train.py --model-size m --epochs 150 --batch 16 --imgsz 640
 ```
 
 **Training Tips:**
@@ -102,13 +102,13 @@ Run inference on images or videos:
 
 ```bash
 # Single image with default size (640)
-uv run python inference.py --input image.jpg --model runs/best.pt --show
+uv run python tools/inference/inference.py --input image.jpg --model runs/best.pt --show
 
 # Video with larger inference size (1024)
-uv run python inference.py --input video.mp4 --model runs/best.pt --imgsz 1024 --save
+uv run python tools/inference/inference.py --input video.mp4 --model runs/best.pt --imgsz 1024 --save
 
 # Custom confidence threshold
-uv run python inference.py --input image.jpg --model runs/best.pt --conf 0.5 --imgsz 640
+uv run python tools/inference/inference.py --input image.jpg --model runs/best.pt --conf 0.5 --imgsz 640
 ```
 
 **Parameters:**
@@ -205,7 +205,7 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 Capture stereo checkerboard pairs with the web helper. The helper only saves stereo pairs when the checkerboard is detected in both cameras.
 
 ```bash
-uv run --extra jetson python capture_calibration.py \
+uv run --extra jetson python tools/calibration/capture_calibration.py \
   --web \
   --use-csi \
   --stereo \
@@ -217,7 +217,7 @@ uv run --extra jetson python capture_calibration.py \
 Open `http://<jetson-ip>:8010`, capture 40-60 good stereo pairs, then calibrate. Use the measured square size for `--square-size`; the last screen-based calibration used `21mm`.
 
 ```bash
-uv run --extra jetson python calibrate_camera.py \
+uv run --extra jetson python tools/calibration/calibrate_camera.py \
   --stereo \
   --left "calibration_images_recal/left/*.jpg" \
   --right "calibration_images_recal/right/*.jpg" \
@@ -242,15 +242,25 @@ Stereo RMS is usable for testing but still high; a rigid printed target and more
 
 ```
 rat-inference/
-├── yolo_inference.py          # Shared inference module (NEW!)
-├── generate-dataset.py        # AI dataset generation (REFACTORED!)
-├── train.py                   # Model training
-├── inference.py               # Image/video inference
 ├── rt_200.py                  # Real-time tracking (Jetson)
+├── config.yaml                # Active robot/camera/tracking configuration
+├── ratbot/
+│   └── vision/
+│       ├── csi_camera.py      # CSI camera capture helper
+│       └── yolo_inference.py  # Shared YOLO inference helpers
+├── tools/
+│   ├── calibration/           # Camera calibration capture and solve tools
+│   ├── dataset/               # Dataset generation, labeling, and cleanup
+│   ├── hardware/              # Servo, motor, and GPIO diagnostics
+│   ├── inference/             # Image/video YOLO inference CLI
+│   └── training/              # YOLO training CLI
 ├── archive/
 │   └── raspberry-pi/
 │       └── rt_100.py          # Legacy Raspberry Pi tracking/trap script
 ├── main.py                    # Legacy Roboflow inference
+├── *_test.py                  # Compatibility wrappers for moved tools
+├── train.py                   # Compatibility wrapper
+├── inference.py               # Compatibility wrapper
 ├── sample-prompts.txt         # Example prompts for generation
 ├── datasets/                  # Training datasets
 │   └── rat/
@@ -267,6 +277,8 @@ Key Files:
 - DEPENDENCIES.md - Detailed dependency management guide
 - TRAINING_GUIDE.md - Model training instructions
 ```
+
+Root-level utility script names are kept as compatibility wrappers for now. Prefer the `tools/...` paths for new commands.
 
 ## Dependency Management
 
@@ -308,12 +320,12 @@ All inference and training scripts now support the `--imgsz` parameter:
 
 ```bash
 # Training
-python train.py --imgsz 640   # Default
-python train.py --imgsz 1024  # Higher accuracy (requires retraining)
+python tools/training/train.py --imgsz 640   # Default
+python tools/training/train.py --imgsz 1024  # Higher accuracy (requires retraining)
 
 # Inference
-python inference.py --imgsz 640   # Default
-python inference.py --imgsz 1024  # Larger inference size
+python tools/inference/inference.py --imgsz 640   # Default
+python tools/inference/inference.py --imgsz 1024  # Larger inference size
 
 # Real-time tracking
 python rt_200.py --imgsz 640   # Default, ~7 FPS on Jetson

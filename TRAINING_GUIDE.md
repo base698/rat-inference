@@ -13,46 +13,46 @@ uv pip install -e .
 
 **Basic training with default settings:**
 ```bash
-python train.py
+python tools/training/train.py
 ```
 
 **Recommended settings for better performance:**
 ```bash
-python train.py --model-size m --epochs 150 --batch 32 --imgsz 640
+python tools/training/train.py --model-size m --epochs 150 --batch 32 --imgsz 640
 ```
 
 **Train on CPU (slower but works without GPU):**
 ```bash
-python train.py --device cpu --batch 8
+python tools/training/train.py --device cpu --batch 8
 ```
 
 **Resume training from checkpoint:**
 ```bash
-python train.py --resume runs/train/rat_detector/weights/last.pt
+python tools/training/train.py --resume runs/train/rat_detector/weights/last.pt
 ```
 
 ### 3. Run Inference
 
 **With trained model on image:**
 ```bash
-python inference.py --input test_image.jpg --model runs/train/rat_detector/weights/best.pt --show --save
+python tools/inference/inference.py --input test_image.jpg --model runs/train/rat_detector/weights/best.pt --show --save
 ```
 
 **With trained model on video:**
 ```bash
-python inference.py --input test_video.mp4 --model runs/train/rat_detector/weights/best.pt --save --output detected_video.mp4
+python tools/inference/inference.py --input test_video.mp4 --model runs/train/rat_detector/weights/best.pt --save --output detected_video.mp4
 ```
 
 **Lower confidence threshold for more detections:**
 ```bash
-python inference.py --input image.jpg --model runs/train/rat_detector/weights/best.pt --conf 0.1 --show
+python tools/inference/inference.py --input image.jpg --model runs/train/rat_detector/weights/best.pt --conf 0.1 --show
 ```
 
 ## Model Sizes
 
 Choose based on your needs:
 - `n` (nano): Fastest, least accurate, ~3MB
-- `s` (small): Fast, good accuracy, ~11MB  
+- `s` (small): Fast, good accuracy, ~11MB
 - `m` (medium): Balanced, ~25MB [RECOMMENDED]
 - `l` (large): Slower, better accuracy, ~43MB
 - `x` (extra-large): Slowest, best accuracy, ~68MB

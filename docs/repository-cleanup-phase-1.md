@@ -2,6 +2,8 @@
 
 Date: 2026-07-16
 
+Note: this file records the pre-Phase-2 inventory. See `docs/repository-cleanup-phase-2.md` for the current tool layout.
+
 ## Recovery Baseline
 
 - Recovery tag: `pre-cleanup-working-main-20260716`
