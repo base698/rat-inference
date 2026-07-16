@@ -2,11 +2,13 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from ratbot.robot import TrackerRobot
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,7 @@ class TrackerControlApi:
         self.config = config
         self._get_target_crosshair_x = get_target_crosshair_x
         self._get_target_crosshair_y = get_target_crosshair_y
-        self._tracker: Optional[Any] = None
+        self._tracker: Optional[TrackerRobot] = None
         self.app = FastAPI()
 
         Path(self.config.static_dir).mkdir(exist_ok=True)
@@ -46,11 +48,11 @@ class TrackerControlApi:
         )
         self._register_routes()
 
-    def set_tracker(self, tracker: Any) -> None:
+    def set_tracker(self, tracker: TrackerRobot) -> None:
         self._tracker = tracker
 
     @property
-    def tracker(self) -> Optional[Any]:
+    def tracker(self) -> Optional[TrackerRobot]:
         return self._tracker
 
     def _register_routes(self) -> None:

@@ -274,6 +274,14 @@ ratbot/web/control_api.py
 
 `rt_200.py` still owns CLI parsing and the current `CameraTracker`, but it now passes the live tracker into the web controller with `control_api.set_tracker(...)`. This makes the web layer depend on a tracker-like object instead of global route functions living inside the robot runtime script.
 
+The Phase 4 slice adds the explicit robot protocol:
+
+```text
+ratbot/robot/interfaces.py
+```
+
+`TrackerRobot` documents the status attributes, frame access, detection data, movement commands, and trigger action that the web controller needs. `ratbot/web/control_api.py` now depends on this protocol instead of `Any`, so another stereo camera plus 2-axis servo robot can reuse the web controller by implementing the same surface.
+
 ## Remaining Notes
 
 - The current stereo depth seems plausible but the stereo RMS is still `1.486px`, so a rigid printed calibration target should improve accuracy.
