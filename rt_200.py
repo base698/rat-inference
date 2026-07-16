@@ -13,14 +13,10 @@ import io
 import shutil
 import yaml
 from datetime import datetime
-from pathlib import Path
-from fastapi import FastAPI, Response, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from typing import Dict
 import uvicorn
 import numpy as np
 from yolo_inference import run_inference as yolo_run_inference, extract_detections
+from ratbot.web import ControlApiConfig, create_control_app
 
 # Set library path for macOS
 os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
@@ -64,15 +60,6 @@ try:
 except ImportError:
     FEETECH_AVAILABLE = False
     print("Feetech libraries not available - servo tracking features disabled")
-
-app = FastAPI()
-tracker_instance = None  # Global reference to tracker for API access
-
-# Create static directory if it doesn't exist
-os.makedirs("static", exist_ok=True)
-
-# Mount static files directory for serving JS, CSS, and other assets
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Load configuration from YAML file
 def load_config(config_path="config.yaml"):
@@ -276,191 +263,19 @@ def get_target_crosshair_y(current_pitch, camera_bore_offset_mm=82, focal_length
 
     return int(adjusted_y)
 
-@app.get("/")
-async def root():
-    """Root endpoint - serve static HTML file"""
-    return FileResponse("static/index.html")
-
-@app.get("/config")
-async def get_config():
-    """Get configuration values for the UI"""
-    if tracker_instance and tracker_instance.connected:
-        initial_yaw = tracker_instance.current_yaw
-        initial_pitch = tracker_instance.current_pitch
-        # Calculate dynamic crosshair positions based on current servo angles
-        target_x = get_target_crosshair_x(initial_yaw)
-        target_y = get_target_crosshair_y(initial_pitch)
-    else:
-        initial_yaw = YAW_CENTER
-        initial_pitch = PITCH_CENTER
-        target_x = get_target_crosshair_x(initial_yaw)
-        target_y = get_target_crosshair_y(initial_pitch)
-
-    return JSONResponse({
-        "YAW_MIN": YAW_MIN,
-        "YAW_MAX": YAW_MAX,
-        "YAW_CENTER": YAW_CENTER,
-        "PITCH_MIN": PITCH_MIN,
-        "PITCH_MAX": PITCH_MAX,
-        "PITCH_CENTER": PITCH_CENTER,
-        "TARGET_CROSSHAIR_X": target_x,
-        "TARGET_CROSSHAIR_Y": target_y,
-        "initial_yaw": initial_yaw,
-        "initial_pitch": initial_pitch,
-        "enable_trigger": tracker_instance.trigger_servo_enabled if tracker_instance else False
-    })
-
-@app.get("/status")
-async def get_status():
-    """Get current status of the tracker"""
-    if not tracker_instance:
-        return JSONResponse({
-            "connected": False,
-            "yaw_position": "N/A",
-            "pitch_position": "N/A",
-            "camera_active": False,
-            "detection_count": 0,
-            "detection": False,
-            "confidence": 0,
-            "recent_detections": []
-        })
-
-    # Don't read positions on every status call - too frequent and causes bus errors
-    # Positions are read once on connection and updated when we write to motors
-    status_data = {
-        "connected": tracker_instance.connected,
-        "yaw_position": tracker_instance.current_yaw,
-        "pitch_position": tracker_instance.current_pitch,
-        "camera_active": tracker_instance.camera_active,
-        "detection_count": tracker_instance.detection_count
-    }
-
-    # Add detection data if camera is active
-    if tracker_instance.camera_active:
-        detection_data = tracker_instance.get_detection_data()
-        status_data.update(detection_data)
-    else:
-        status_data.update({
-            "detection": False,
-            "confidence": 0,
-            "recent_detections": []
-        })
-
-    return JSONResponse(status_data)
-
-@app.get("/stream-frame")
-async def stream_frame():
-    """Get the latest camera frame as bytes"""
-    if not tracker_instance or not tracker_instance.camera_active:
-        # Return empty JPEG if no camera
-        return Response(content=b'', media_type="image/jpeg")
-
-    frame_bytes = tracker_instance.get_latest_frame_bytes()
-    if frame_bytes is None:
-        return Response(content=b'', media_type="image/jpeg")
-
-    return Response(content=frame_bytes, media_type="image/jpeg")
-
-@app.post("/set-position")
-async def set_position(request: dict):
-    """Set servo positions"""
-    if not tracker_instance or not tracker_instance.connected:
-        return JSONResponse({
-            "success": False,
-            "message": "Tracker not connected"
-        })
-
-    try:
-        yaw = request.get("yaw")
-        pitch = request.get("pitch")
-
-        if yaw is not None:
-            tracker_instance.set_yaw(yaw)
-        if pitch is not None:
-            tracker_instance.set_pitch(pitch)
-
-        return JSONResponse({
-            "success": True,
-            "message": "Position updated"
-        })
-    except Exception as e:
-        return JSONResponse({
-            "success": False,
-            "message": str(e)
-        })
-
-@app.post("/trigger-servo")
-async def trigger_servo():
-    """Manually trigger the action servo"""
-    if not tracker_instance:
-        return JSONResponse(
-            content={"success": False, "message": "Tracker not initialized"},
-            status_code=500
-        )
-
-    if not tracker_instance.trigger_servo_enabled:
-        return JSONResponse(
-            content={"success": False, "message": "Trigger servo is not enabled. Run with --enable-trigger flag to enable."},
-            status_code=400
-        )
-
-    try:
-        tracker_instance.trigger_action_servo()
-        return JSONResponse(
-            content={"success": True, "message": "Servo triggered successfully!"},
-            status_code=200
-        )
-    except Exception as e:
-        return JSONResponse(
-            content={"success": False, "message": f"Error triggering servo: {str(e)}"},
-            status_code=500
-        )
-
-@app.get("/detections/{filename}")
-async def get_detection(filename: str):
-    """Serve detection image files"""
-    detection_path = Path("detections") / filename
-    if not detection_path.exists():
-        raise HTTPException(status_code=404, detail="Detection image not found")
-    return FileResponse(detection_path)
-
-@app.post("/move-to-position")
-async def move_to_position(request: Dict):
-    """Move tracker to clicked canvas position"""
-    if not tracker_instance:
-        return JSONResponse({
-            "success": False,
-            "message": "Tracker not initialized"
-        })
-
-    try:
-        x = request.get("x")
-        y = request.get("y")
-
-        if x is None or y is None:
-            return JSONResponse({
-                "success": False,
-                "message": "Missing x or y coordinates"
-            })
-
-        # Use the move_to_pixel function for direct positioning (not PID controller)
-        desired_yaw, desired_pitch = tracker_instance.move_to_pixel(x, y)
-
-        # Update servo positions
-        tracker_instance.set_yaw(desired_yaw)
-        tracker_instance.set_pitch(desired_pitch)
-
-        return JSONResponse({
-            "success": True,
-            "message": f"Moved to position ({x}, {y})",
-            "yaw": desired_yaw,
-            "pitch": desired_pitch
-        })
-    except Exception as e:
-        return JSONResponse({
-            "success": False,
-            "message": str(e)
-        })
+control_api = create_control_app(
+    ControlApiConfig(
+        yaw_min=YAW_MIN,
+        yaw_max=YAW_MAX,
+        yaw_center=YAW_CENTER,
+        pitch_min=PITCH_MIN,
+        pitch_max=PITCH_MAX,
+        pitch_center=PITCH_CENTER,
+    ),
+    get_target_crosshair_x=get_target_crosshair_x,
+    get_target_crosshair_y=get_target_crosshair_y,
+)
+app = control_api.app
 
 class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
@@ -1760,8 +1575,7 @@ def main():
     if args.enable_camera and not args.disable_detection:
         model_path = args.model
 
-    # Create tracker and set global instance
-    global tracker_instance
+    # Create tracker and hand it to the web controller
     tracker = CameraTracker(
         port=args.port,
         enable_servos=not args.disable_servos,
@@ -1778,7 +1592,7 @@ def main():
         stereo_mode=args.stereo,
         baseline_override=args.baseline_override
     )
-    tracker_instance = tracker
+    control_api.set_tracker(tracker)
 
     print("=" * 60)
     print("Camera Tracker Control System with Detection")

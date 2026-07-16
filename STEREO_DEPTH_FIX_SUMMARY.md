@@ -266,6 +266,14 @@ calibration_output_recal/
 
 Phase 3 is the modularization pass: keep `rt_200.py` usable as the CLI entry point, but extract the robot/camera/stereo/web pieces into importable modules so the controller can be reused with another stereo camera and 2-axis servo robot.
 
+The first Phase 3 slice extracts the FastAPI controller into:
+
+```text
+ratbot/web/control_api.py
+```
+
+`rt_200.py` still owns CLI parsing and the current `CameraTracker`, but it now passes the live tracker into the web controller with `control_api.set_tracker(...)`. This makes the web layer depend on a tracker-like object instead of global route functions living inside the robot runtime script.
+
 ## Remaining Notes
 
 - The current stereo depth seems plausible but the stereo RMS is still `1.486px`, so a rigid printed calibration target should improve accuracy.
