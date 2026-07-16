@@ -29,7 +29,7 @@ tracking:
   # Base crosshair position
   crosshair:
     x_base: 290      # Base X position at yaw center (2200)
-    y_base: 357      # Base Y position shifted down 28px to align laser/crosshair
+    y_base: 371      # Base Y position shifted down another 14px to align laser/crosshair
 
   # Yaw compensation - adjusts crosshair X based on yaw angle
   # As yaw increases (camera pans right), crosshair X position changes
