@@ -146,7 +146,7 @@ uv run --extra jetson python rt_200.py \
 uv run python rt_200.py --no-connect --enable-camera --use-csi
 ```
 
-The custom rat models currently expose a single YOLO class named `item`, not `rat`. By default, `config.yaml` sets `target_classes: [item]`; omit `--target-class` to use the configured target, or pass `--target-class all` to accept every class from the loaded model.
+The custom rat models currently expose a single YOLO class named `item`, not `rat`. The TensorRT engine may report that same single class as `class0` if metadata is missing. By default, `config.yaml` sets `target_classes: [item, class0]`; omit `--target-class` to use the configured target, or pass `--target-class all` to accept every class from the loaded model.
 
 Current preferred rat auto-tracking command:
 
@@ -158,8 +158,7 @@ uv run --extra jetson python rt_200.py \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5 \
   --port /dev/ttyACM0 \
-  --model runs/yolo11n-2025-10-23/weights/best.pt \
-  --target-class item \
+  --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.60 \
   --inference-fps 14 \
   --tracking-smoothing 0.45 \
@@ -224,7 +223,8 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 **Performance Notes:**
 - `--inference-fps` is a scheduling target, not guaranteed throughput.
 - The tracker logs `Inference actual FPS` every few seconds. In live 640px stereo tracking tests, the current Python/Ultralytics path measured about `1.3-1.5` actual FPS despite a 14 FPS target.
-- Keep `--inference-fps 14` as an upper cap for now, but real 10+ FPS will likely require optimization such as shared camera frames, less frequent depth calculation, or an exported TensorRT/ONNX model.
+- The Jetson TensorRT engine at `runs/yolo11n-2025-10-23/weights/best.engine` is the preferred live path. The engine was exported from the 10-23 model for FP16 inference; Ultralytics does not accept `quantize=16` for this export, so use `half=True` when regenerating it.
+- Keep `--inference-fps 14` as an upper cap for now. If the tracker cannot hold that rate with depth and servo control enabled, reduce depth frequency or the inference target before increasing image size.
 - `imgsz=1024` is not recommended for live tracking until the 640px path is faster.
 
 **Tracking Smoothness:**
@@ -233,9 +233,24 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 - The current PID gains are intentionally more aggressive than the original values; smoothing and step caps keep that from snapping too hard between detections.
 
 **Model Notes:**
-- `runs/yolo11n-2025-10-23/weights/best.pt` is the current preferred live tracking model.
+- `runs/yolo11n-2025-10-23/weights/best.engine` is the current preferred live tracking model on the Jetson.
+- `runs/yolo11n-2025-10-23/weights/best.pt` is the source model for retraining, comparison, or regenerating the engine.
 - `runs/yolo11n-2025-10-24/weights/best.pt` is kept for comparison but performed worse in live testing.
-- Both custom rat models expose their target class as `item`.
+- Both custom rat models expose their target class as `item`; the TensorRT engine can appear as `class0` when metadata is absent.
+
+Regenerate the TensorRT engine on the Jetson with the CUDA-enabled Docker base:
+
+```bash
+docker run --rm --runtime=nvidia --ipc=host --network=host \
+  -v /home/base698/rat-inference:/app -w /app \
+  ultralytics/ultralytics:latest-jetson-jetpack6 \
+  yolo export \
+    model=runs/yolo11n-2025-10-23/weights/best.pt \
+    format=engine \
+    imgsz=640 \
+    half=True \
+    device=0
+```
 
 #### Stereo Recalibration
 
@@ -333,7 +348,8 @@ rat-inference/
 ├── runs/                             # Training outputs
 │   ├── yolo11n-2025-10-23/             # Current preferred live tracking model
 │   │   └── weights/
-│   │       └── best.pt
+│   │       ├── best.pt
+│   │       └── best.engine
 │   └── yolo11n-2025-10-24/             # Comparison model
 │       └── weights/
 │           └── best.pt
@@ -451,8 +467,7 @@ uv run python rt_200.py \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 57.5 \
-  --model runs/yolo11n-2025-10-23/weights/best.pt \
-  --target-class item \
+  --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.60 \
   --imgsz 640 \
   --inference-fps 14

@@ -14,16 +14,17 @@ RUN python3 -m pip install --upgrade pip && \
     pip install "setuptools<75.0.0" && \
     pip install \
         "numpy<2" \
-        pillow>=10.0.0 \
-        ultralytics>=8.3.179 \
+        "pillow>=10.0.0" \
         opencv-python \
         supervision \
-        fastapi>=0.110.3 \
+        "fastapi>=0.110.3" \
         uvicorn \
-        lerobot
-
-# Install Feetech servo SDK separately (to avoid reinstalling lerobot on changes)
-RUN pip install feetech-servo-sdk
+        pyserial \
+        deepdiff \
+        accelerate \
+        datasets \
+        feetech-servo-sdk && \
+    pip install --no-deps lerobot
 # Copy project files (after pip install so code changes don't invalidate pip cache)
 COPY config.yaml ./
 COPY pyproject.toml ./
@@ -45,4 +46,4 @@ EXPOSE 8000
 
 # Default command runs the rt_200.py server with stereo mode
 # Users can override this to run tools/vision/inference/inference.py instead
-CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--stereo", "--model", "runs/yolo11n-2025-10-24/weights/best.pt"]
+CMD ["python3", "rt_200.py", "--enable-camera", "--use-csi", "--no-connect", "--stereo", "--model", "runs/yolo11n-2025-10-23/weights/best.engine"]

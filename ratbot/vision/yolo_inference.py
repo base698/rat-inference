@@ -8,6 +8,35 @@ import numpy as np
 from pathlib import Path
 
 
+def get_class_name(model, cls_id: int) -> str:
+    """Return a stable class name for YOLO models with list or dict names."""
+    names = getattr(model, "names", {}) or {}
+
+    if isinstance(names, dict):
+        return str(names.get(cls_id, f"class{cls_id}"))
+
+    if cls_id < len(names):
+        return str(names[cls_id])
+
+    return f"class{cls_id}"
+
+
+def target_class_matches(class_name: str, cls_id: int, target_class: Optional[str]) -> bool:
+    """Match target filters by display name, numeric id, or classN fallback."""
+    if not target_class:
+        return True
+
+    target = target_class.strip().lower()
+    normalized_name = class_name.strip().lower()
+    class_aliases = {
+        str(cls_id),
+        f"class{cls_id}",
+        f"class_{cls_id}",
+    }
+
+    return target in normalized_name or target in class_aliases
+
+
 def run_inference(
     model,
     source: Union[str, Path, np.ndarray],
@@ -106,10 +135,10 @@ def extract_detections(results, model, target_class: Optional[str] = None):
         for box in r.boxes:
             cls_id = int(box.cls)
             conf = float(box.conf)
-            class_name = model.names[cls_id] if cls_id < len(model.names) else f"Class_{cls_id}"
+            class_name = get_class_name(model, cls_id)
 
             # Filter by target class if specified
-            if target_class and target_class.lower() not in class_name.lower():
+            if not target_class_matches(class_name, cls_id, target_class):
                 continue
 
             # Get bounding box coordinates

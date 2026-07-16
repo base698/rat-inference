@@ -108,9 +108,10 @@ pid:
 detection:
   confidence_threshold: 0.60
   imgsz: 640
-  model_path: "runs/yolo11n-2025-10-23/weights/best.pt"
+  model_path: "runs/yolo11n-2025-10-23/weights/best.engine"
   target_classes:
     - item
+    - class0
 
 # Notes:
 # - pitch_compensation adjusts the target crosshair Y position based on current pitch

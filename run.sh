@@ -61,9 +61,14 @@ run_rt200() {
         python3 rt_200.py \
             --enable-camera \
             --port /dev/ttyACM0 \
-            --model runs/yolo11n-2025-10-24/weights/best.pt \
+            --model runs/yolo11n-2025-10-23/weights/best.engine \
             --use-csi \
             --camera-id 0 \
+            --stereo \
+            --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
+            --baseline-override 57.5 \
+            --confidence 0.60 \
+            --inference-fps 14 \
             "$@"
 
     echo ""
@@ -109,7 +114,7 @@ run_inference() {
         -v $(pwd):/app/data \
         $IMAGE_NAME \
         python3 tools/vision/inference/inference.py \
-            --model runs/yolo11n-2025-10-24/weights/best.pt \
+            --model runs/yolo11n-2025-10-23/weights/best.engine \
             "${ARGS[@]}"
 }
 
