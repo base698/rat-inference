@@ -16,6 +16,12 @@ from datetime import datetime
 import uvicorn
 import numpy as np
 from yolo_inference import run_inference as yolo_run_inference, extract_detections
+from ratbot.robot import (
+    CrosshairAiming,
+    DepthCrosshairCompensation,
+    PitchCompensation,
+    YawCompensation,
+)
 from ratbot.web import ControlApiConfig, create_control_app
 
 # Set library path for macOS
@@ -161,6 +167,33 @@ else:
     LASER_MAX_ADJUST_PX = 80.0
 
 
+AIMING = CrosshairAiming(
+    x_base=TARGET_CROSSHAIR_X_BASE,
+    y_base=TARGET_CROSSHAIR_Y_BASE,
+    yaw=YawCompensation(
+        enabled=YAW_COMPENSATION_ENABLED,
+        yaw_min=YAW_COMP_MIN,
+        yaw_max=YAW_COMP_MAX,
+        x_offset_at_min=X_OFFSET_AT_MIN,
+        x_offset_at_max=X_OFFSET_AT_MAX,
+    ),
+    pitch=PitchCompensation(
+        enabled=PITCH_COMPENSATION_ENABLED,
+        pitch_min=PITCH_COMP_MIN,
+        pitch_max=PITCH_COMP_MAX,
+        y_offset_at_min=Y_OFFSET_AT_MIN,
+        y_offset_at_max=Y_OFFSET_AT_MAX,
+        points=tuple(PITCH_COMP_POINTS),
+    ),
+    depth=DepthCrosshairCompensation(
+        enabled=DEPTH_CROSSHAIR_COMPENSATION_ENABLED,
+        laser_vertical_offset_mm=LASER_VERTICAL_OFFSET_MM,
+        reference_distance_mm=LASER_REFERENCE_DISTANCE_MM,
+        max_adjust_px=LASER_MAX_ADJUST_PX,
+    ),
+)
+
+
 def get_target_crosshair_x(current_yaw):
     """
     Calculate the target crosshair X position based on current yaw.
@@ -175,27 +208,7 @@ def get_target_crosshair_x(current_yaw):
     Returns:
         int: Adjusted X position for the target crosshair
     """
-    if not YAW_COMPENSATION_ENABLED:
-        return int(TARGET_CROSSHAIR_X_BASE)
-
-    # Clamp yaw to valid range
-    yaw = max(YAW_COMP_MIN, min(YAW_COMP_MAX, current_yaw))
-
-    # Linear interpolation between min and max yaw
-    # t = 0.0 at YAW_COMP_MIN, t = 1.0 at YAW_COMP_MAX
-    yaw_range = YAW_COMP_MAX - YAW_COMP_MIN
-    if yaw_range == 0:
-        t = 0.0
-    else:
-        t = (yaw - YAW_COMP_MIN) / yaw_range
-
-    # Interpolate X offset
-    x_offset = X_OFFSET_AT_MIN + t * (X_OFFSET_AT_MAX - X_OFFSET_AT_MIN)
-
-    # Calculate adjusted X position
-    adjusted_x = TARGET_CROSSHAIR_X_BASE + x_offset
-
-    return int(adjusted_x)
+    return AIMING.target_x(current_yaw)
 
 
 def get_target_crosshair_y(current_pitch, camera_bore_offset_mm=82, focal_length_px=None, assumed_distance_mm=5000):
@@ -214,54 +227,12 @@ def get_target_crosshair_y(current_pitch, camera_bore_offset_mm=82, focal_length
     Returns:
         int: Adjusted Y position for the target crosshair
     """
-    if not PITCH_COMPENSATION_ENABLED:
-        return int(TARGET_CROSSHAIR_Y_BASE)
-
-    # Clamp pitch to valid range
-    pitch_raw = max(PITCH_COMP_MIN, min(PITCH_COMP_MAX, current_pitch))
-
-    # Convert pitch servo position to actual angle in degrees
-    # Servo range: 100-550 → 8.8° to 44°
-    pitch_angle_min = 8.8  # degrees at pitch=100
-    pitch_angle_max = 44.0  # degrees at pitch=550
-    servo_range = PITCH_COMP_MAX - PITCH_COMP_MIN
-
-    if servo_range == 0:
-        pitch_angle_deg = pitch_angle_min
-    else:
-        t = (pitch_raw - PITCH_COMP_MIN) / servo_range
-        pitch_angle_deg = pitch_angle_min + t * (pitch_angle_max - pitch_angle_min)
-
-    # Calculate parallax offset in pixels
-    # The bore is camera_bore_offset_mm below the camera
-    # At distance D, this creates a vertical offset in the image plane:
-    # pixel_offset = (focal_length * offset_mm) / distance_mm
-
-    if focal_length_px is not None:
-        # Use actual focal length from calibration
-        # Offset in pixels = (f * 82mm) / distance
-        # We use assumed distance for now (can be updated when stereo provides real distance)
-        y_offset = (focal_length_px * camera_bore_offset_mm) / assumed_distance_mm
-    elif PITCH_COMP_POINTS:
-        if pitch_raw <= PITCH_COMP_POINTS[0][0]:
-            y_offset = PITCH_COMP_POINTS[0][1]
-        elif pitch_raw >= PITCH_COMP_POINTS[-1][0]:
-            y_offset = PITCH_COMP_POINTS[-1][1]
-        else:
-            y_offset = Y_OFFSET_AT_MIN
-            for (pitch_a, offset_a), (pitch_b, offset_b) in zip(PITCH_COMP_POINTS, PITCH_COMP_POINTS[1:]):
-                if pitch_a <= pitch_raw <= pitch_b:
-                    segment_t = (pitch_raw - pitch_a) / (pitch_b - pitch_a)
-                    y_offset = offset_a + segment_t * (offset_b - offset_a)
-                    break
-    else:
-        # Fallback to empirical linear interpolation if focal length not available
-        y_offset = Y_OFFSET_AT_MIN + t * (Y_OFFSET_AT_MAX - Y_OFFSET_AT_MIN)
-
-    # Calculate adjusted Y position (positive offset moves crosshair DOWN in image)
-    adjusted_y = TARGET_CROSSHAIR_Y_BASE + y_offset
-
-    return int(adjusted_y)
+    return AIMING.target_y(
+        current_pitch,
+        camera_bore_offset_mm=camera_bore_offset_mm,
+        focal_length_px=focal_length_px,
+        assumed_distance_mm=assumed_distance_mm,
+    )
 
 control_api = create_control_app(
     ControlApiConfig(
@@ -1001,19 +972,16 @@ class CameraTracker:
             depth_mm = self.calculate_depth(frame, frame_right, ch_x, ch_y)
             if depth_mm is not None:
                 crosshair_depth_m = depth_mm / 1000.0  # Convert to meters
-                if DEPTH_CROSSHAIR_COMPENSATION_ENABLED and LASER_REFERENCE_DISTANCE_MM > 0:
-                    focal_y = None
-                    if self.K1 is not None:
-                        focal_y = float(self.K1[1, 1])
-                    elif self.camera_matrix is not None:
-                        focal_y = float(self.camera_matrix[1, 1])
+                focal_y = None
+                if self.K1 is not None:
+                    focal_y = float(self.K1[1, 1])
+                elif self.camera_matrix is not None:
+                    focal_y = float(self.camera_matrix[1, 1])
 
-                    if focal_y is not None:
-                        depth_adjust_px = focal_y * LASER_VERTICAL_OFFSET_MM * (
-                            (1.0 / depth_mm) - (1.0 / LASER_REFERENCE_DISTANCE_MM)
-                        )
-                        depth_adjust_px = max(-LASER_MAX_ADJUST_PX, min(LASER_MAX_ADJUST_PX, depth_adjust_px))
-                        ch_y = int(round(ch_y + depth_adjust_px))
+                depth_adjust = AIMING.depth_adjust_px(depth_mm, focal_y)
+                if depth_adjust is not None:
+                    depth_adjust_px = depth_adjust
+                    ch_y = int(round(ch_y + depth_adjust_px))
                 depth_text = f"{crosshair_depth_m:.2f}m"
             else:
                 depth_text = f"-- {self.last_depth_debug}"

@@ -282,6 +282,14 @@ ratbot/robot/interfaces.py
 
 `TrackerRobot` documents the status attributes, frame access, detection data, movement commands, and trigger action that the web controller needs. `ratbot/web/control_api.py` now depends on this protocol instead of `Any`, so another stereo camera plus 2-axis servo robot can reuse the web controller by implementing the same surface.
 
+The Phase 5 slice extracts crosshair and laser-depth aiming behavior into:
+
+```text
+ratbot/robot/aiming.py
+```
+
+`CrosshairAiming` now owns yaw-to-X compensation, pitch-to-Y compensation, pitch point interpolation, and stereo-depth laser Y adjustment. `rt_200.py` still exposes the existing `get_target_crosshair_x(...)` and `get_target_crosshair_y(...)` wrappers, so the web controller and tracker call sites remain stable while the robot package gains real reusable behavior.
+
 ## Remaining Notes
 
 - The current stereo depth seems plausible but the stereo RMS is still `1.486px`, so a rigid printed calibration target should improve accuracy.
