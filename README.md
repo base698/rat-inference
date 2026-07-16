@@ -242,39 +242,69 @@ Stereo RMS is usable for testing but still high; a rigid printed target and more
 
 ```
 rat-inference/
-├── rt_200.py                  # Real-time tracking (Jetson)
-├── config.yaml                # Active robot/camera/tracking configuration
+├── rt_200.py                         # Real-time tracking CLI/server for the Jetson
+├── config.yaml                       # Active robot, camera, tracking, and aiming config
 ├── ratbot/
-│   └── vision/
-│       ├── csi_camera.py      # CSI camera capture helper
-│       └── yolo_inference.py  # Shared YOLO inference helpers
+│   ├── robot/
+│   │   ├── aiming.py                 # Crosshair, pitch, and depth aiming compensation
+│   │   └── interfaces.py             # TrackerRobot protocol used by the web controller
+│   ├── vision/
+│   │   ├── csi_camera.py             # CSI camera capture helper
+│   │   └── yolo_inference.py         # Shared YOLO inference helpers
+│   └── web/
+│       └── control_api.py            # FastAPI control and streaming routes
+├── static/
+│   ├── index.html                    # Browser control UI
+│   └── worker.js                     # Browser-side worker for frame handling
 ├── tools/
-│   ├── hardware/              # Servo, motor, and GPIO diagnostics
+│   ├── README.md                     # Tool command index
+│   ├── hardware/
+│   │   ├── find_motors.py            # Feetech motor discovery
+│   │   ├── gpio_test.py              # GPIO/PWM trigger diagnostics
+│   │   ├── pitch_test.py             # Pitch servo test helper
+│   │   ├── servo_test_sysfs.py       # Legacy sysfs PWM servo test
+│   │   └── trigger_position_test.py  # Trigger servo position helper
 │   └── vision/
-│       ├── calibration/       # Camera calibration capture, images, and solved outputs
-│       ├── dataset/           # Dataset generation, labeling, and cleanup
-│       ├── inference/         # Image/video YOLO inference CLI
-│       ├── training/          # YOLO training CLI
-│       ├── legacy/            # Older image/Roboflow experiments
-│       ├── assets/            # Sample/reference images
-│       └── sample-prompts.txt # Example prompts for generation
+│       ├── calibration/
+│       │   ├── capture_calibration.py # Capture mono/stereo checkerboard images
+│       │   ├── calibrate_camera.py    # Solve mono/stereo camera calibration
+│       │   ├── images_recal/          # Current tracked stereo calibration captures
+│       │   └── output_recal/          # Current tracked calibration .npz outputs
+│       ├── dataset/
+│       │   ├── dataset_cleaner.py     # Review/remove bad dataset images
+│       │   ├── generate-dataset.py    # Generate candidate training images
+│       │   ├── labeler.py             # GUI YOLO labeling helper
+│       │   └── extract-frames.sh      # Extract frames from videos
+│       ├── inference/
+│       │   └── inference.py           # Standalone image/video YOLO inference CLI
+│       ├── training/
+│       │   └── train.py               # YOLO training CLI
+│       ├── legacy/
+│       │   └── main.py                # Older Roboflow/image experiment
+│       ├── assets/                    # Sample/reference images
+│       └── sample-prompts.txt         # Example prompts for generation
+├── docs/
+│   └── repository-cleanup-phase-*.md  # Cleanup and modularization notes
 ├── archive/
 │   └── raspberry-pi/
-│       └── rt_100.py          # Legacy Raspberry Pi tracking/trap script
-├── datasets/                  # Training datasets
+│       └── rt_100.py                 # Legacy Raspberry Pi tracking/trap script
+├── datasets/                         # Training datasets
 │   └── rat/
-│       ├── images/            # Training images
-│       ├── labels/            # YOLO labels
-│       └── unsorted/          # Generated images
-├── runs/                      # Training outputs
+│       ├── images/{train,val}/       # Training and validation images
+│       ├── labels/{train,val}/       # YOLO labels
+│       └── unsorted/                 # Generated or pending images
+├── runs/                             # Training outputs
 │   └── yolo11n-2025-10-24/
 │       └── weights/
-│           └── best.pt        # Trained model
-└── pyproject.toml            # Dependencies with groups
+│           └── best.pt               # Current trained model used by examples
+├── Dockerfile
+├── run.sh
+└── pyproject.toml                    # Dependencies with optional groups
 
 Key Files:
-- DEPENDENCIES.md - Detailed dependency management guide
+- DEPENDENCIES.md - Dependency group details and conflict notes
 - TRAINING_GUIDE.md - Model training instructions
+- STEREO_DEPTH_FIX_SUMMARY.md - Stereo/depth/laser alignment repair log
 ```
 
 Root-level utility wrappers have been removed. Use the `tools/hardware/...` and `tools/vision/...` paths for utility commands.
