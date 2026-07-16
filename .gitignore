@@ -1,4 +1,5 @@
 .DS_Store
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -7,7 +8,27 @@ dist/
 wheels/
 *.egg-info
 
-yolo*.pt
-
 # Virtual environments
-.venv
+.venv/
+
+# Model weights and local binary wheels
+yolo*.pt
+*.whl
+
+# Runtime captures and generated local artifacts
+detections/
+calibration_images/
+calibration_images_recal/
+*.log
+*.bak
+*.bak-*
+bus.jpg
+screenshot.png
+test1.png
+test_frame.jpg
+test_capture_*.jpg
+
+# Recalibration outputs that are useful for inspection but regenerated locally.
+# The selected .npz calibration files are intentionally tracked.
+calibration_output_recal/**/visualizations/
+calibration_output_recal/**/undistortion_comparison.jpg

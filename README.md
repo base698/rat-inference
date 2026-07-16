@@ -247,7 +247,9 @@ rat-inference/
 ├── train.py                   # Model training
 ├── inference.py               # Image/video inference
 ├── rt_200.py                  # Real-time tracking (Jetson)
-├── rt_100.py                  # Legacy tracking
+├── archive/
+│   └── raspberry-pi/
+│       └── rt_100.py          # Legacy Raspberry Pi tracking/trap script
 ├── main.py                    # Legacy Roboflow inference
 ├── sample-prompts.txt         # Example prompts for generation
 ├── datasets/                  # Training datasets
