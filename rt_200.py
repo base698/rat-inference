@@ -234,6 +234,25 @@ def get_target_crosshair_y(current_pitch, camera_bore_offset_mm=82, focal_length
         assumed_distance_mm=assumed_distance_mm,
     )
 
+def choose_detections_dir():
+    """Return a writable detections directory, falling back if old files are root-owned."""
+    for candidate in ("detections", os.path.join("run_logs", "detections")):
+        try:
+            os.makedirs(candidate, exist_ok=True)
+            test_path = os.path.join(candidate, ".write_test")
+            with open(test_path, "w", encoding="utf-8") as test_file:
+                test_file.write("ok")
+            os.remove(test_path)
+            if candidate != "detections":
+                print(f"⚠ detections/ is not writable; saving detections to {candidate}")
+            return candidate
+        except OSError:
+            continue
+
+    raise RuntimeError("No writable detections directory found")
+
+DETECTIONS_DIR = choose_detections_dir()
+
 control_api = create_control_app(
     ControlApiConfig(
         yaw_min=YAW_MIN,
@@ -242,6 +261,7 @@ control_api = create_control_app(
         pitch_min=PITCH_MIN,
         pitch_max=PITCH_MAX,
         pitch_center=PITCH_CENTER,
+        detections_dir=DETECTIONS_DIR,
     ),
     get_target_crosshair_x=get_target_crosshair_x,
     get_target_crosshair_y=get_target_crosshair_y,
@@ -253,7 +273,9 @@ class CameraTracker:
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
                  use_csi=False, invert_camera=False, imgsz=640,
-                 calibration_file=None, stereo_mode=False, baseline_override=None):
+                 inference_fps=None, target_classes=None, calibration_file=None,
+                 stereo_mode=False, baseline_override=None,
+                 tracking_smoothing=0.45, max_yaw_step=45, max_pitch_step=28):
         """
         Initialize the camera tracker
 
@@ -269,9 +291,14 @@ class CameraTracker:
             use_csi: Use CSI camera with GStreamer pipeline (Jetson)
             invert_camera: Invert camera 180 degrees for upside-down mounting (default: False)
             imgsz: Inference image size in pixels (default: 640)
+            inference_fps: Target inference loop rate
+            target_classes: Class names to track from YOLO detections
             calibration_file: Path to camera calibration file (.npz)
             stereo_mode: Use stereo cameras for depth estimation
             baseline_override: Override baseline in mm (if calibration is incorrect)
+            tracking_smoothing: Detection center smoothing alpha (0 disables, 1 follows raw detections)
+            max_yaw_step: Maximum yaw raw-unit move per inference update
+            max_pitch_step: Maximum pitch raw-unit move per inference update
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -292,16 +319,24 @@ class CameraTracker:
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.imgsz = imgsz
+        self.inference_fps = max(1.0, float(inference_fps or INFERENCE_FPS))
+        self.target_classes = self._normalize_target_classes(target_classes)
+        self.tracking_smoothing = max(0.0, min(1.0, float(tracking_smoothing)))
+        self.max_yaw_step = max(0, int(max_yaw_step))
+        self.max_pitch_step = max(0, int(max_pitch_step))
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
         self.latest_bbox = None  # Store latest bounding box (x1, y1, x2, y2)
         self.latest_center_point = None  # Store latest center point (x, y)
+        self.smoothed_tracking_center = None
         self.latest_depth = None  # Store depth in mm at detection point
         self.recent_detections = []
         self.frame_lock = threading.Lock()
         self.inference_lock = threading.Lock()
         self.motor_lock = threading.Lock()
+        self.inference_loop_count = 0
+        self.inference_fps_window_start = time.time()
 
         # Camera calibration
         self.calibration_file = calibration_file
@@ -352,12 +387,16 @@ class CameraTracker:
         self.pid_last_time = time.time()
 
         # PID gains (tune these for your system)
-        self.pid_yaw_kp = 0.3    # Proportional gain for yaw
-        self.pid_yaw_ki = 0.01   # Integral gain for yaw
-        self.pid_yaw_kd = 0.1    # Derivative gain for yaw
-        self.pid_pitch_kp = 0.3  # Proportional gain for pitch
-        self.pid_pitch_ki = 0.01 # Integral gain for pitch
-        self.pid_pitch_kd = 0.1  # Derivative gain for pitch
+        pid_config = CONFIG.get('pid', {}) if CONFIG else {}
+        yaw_pid_config = pid_config.get('yaw', {})
+        pitch_pid_config = pid_config.get('pitch', {})
+        self.pid_yaw_kp = float(yaw_pid_config.get('kp', 0.85))
+        self.pid_yaw_ki = float(yaw_pid_config.get('ki', 0.01))
+        self.pid_yaw_kd = float(yaw_pid_config.get('kd', 0.03))
+        self.pid_pitch_kp = float(pitch_pid_config.get('kp', 0.85))
+        self.pid_pitch_ki = float(pitch_pid_config.get('ki', 0.01))
+        self.pid_pitch_kd = float(pitch_pid_config.get('kd', 0.03))
+        self.pid_max_integral = float(pid_config.get('max_integral', 10.0))
 
         # Camera and servo calibration
         # Assuming camera FOV (field of view) - adjust these based on your camera specs
@@ -372,7 +411,8 @@ class CameraTracker:
         self.pitch_range_degrees = 55.0   # Total pitch range in degrees
 
         # Create detections directory
-        os.makedirs("detections", exist_ok=True)
+        self.detections_dir = DETECTIONS_DIR
+        os.makedirs(self.detections_dir, exist_ok=True)
 
         # Initialize tracking servos if enabled
         if self.enable_servos and not self.no_connect and FEETECH_AVAILABLE:
@@ -395,6 +435,57 @@ class CameraTracker:
             self.start_camera_thread()
             if self.model:
                 self.start_inference_thread()
+
+    @staticmethod
+    def _normalize_target_classes(target_classes):
+        if target_classes is None:
+            return []
+
+        if isinstance(target_classes, str):
+            raw_classes = [target_classes]
+        else:
+            raw_classes = target_classes
+
+        normalized = []
+        for item in raw_classes:
+            normalized.extend(part.strip().lower() for part in str(item).split(","))
+
+        normalized = [item for item in normalized if item]
+        if any(item in {"*", "all", "any"} for item in normalized):
+            return []
+
+        return normalized
+
+    @staticmethod
+    def _minimum_tracking_step(raw_delta, pixel_error, deadband_px=8, min_step=6):
+        if abs(pixel_error) <= deadband_px or abs(raw_delta) >= min_step:
+            return raw_delta
+
+        return min_step if pixel_error > 0 else -min_step
+
+    @staticmethod
+    def _limit_tracking_step(current_position, desired_position, max_step):
+        if max_step <= 0:
+            return desired_position
+
+        delta = desired_position - current_position
+        if abs(delta) <= max_step:
+            return desired_position
+
+        return current_position + (max_step if delta > 0 else -max_step)
+
+    def smooth_tracking_center(self, center_x, center_y):
+        if self.tracking_smoothing <= 0 or self.smoothed_tracking_center is None:
+            self.smoothed_tracking_center = (float(center_x), float(center_y))
+            return center_x, center_y
+
+        alpha = self.tracking_smoothing
+        prev_x, prev_y = self.smoothed_tracking_center
+        smooth_x = (alpha * center_x) + ((1.0 - alpha) * prev_x)
+        smooth_y = (alpha * center_y) + ((1.0 - alpha) * prev_y)
+        self.smoothed_tracking_center = (smooth_x, smooth_y)
+
+        return int(round(smooth_x)), int(round(smooth_y))
 
     def load_calibration(self):
         """Load camera calibration from file (single or stereo)"""
@@ -1180,7 +1271,7 @@ class CameraTracker:
         # Integral term (accumulated error)
         self.pid_yaw_integral += angle_error_yaw * dt
         # Anti-windup: limit integral to prevent excessive buildup
-        max_integral = 10.0  # degrees
+        max_integral = self.pid_max_integral  # degrees
         self.pid_yaw_integral = max(-max_integral, min(max_integral, self.pid_yaw_integral))
         yaw_i = self.pid_yaw_ki * self.pid_yaw_integral
 
@@ -1210,6 +1301,8 @@ class CameraTracker:
         # ===== CONVERT ANGULAR CORRECTIONS TO SERVO RAW UNITS =====
         yaw_correction_raw = self.angle_to_servo_raw(yaw_correction_deg, axis='yaw')
         pitch_correction_raw = self.angle_to_servo_raw(pitch_correction_deg, axis='pitch')
+        yaw_correction_raw = self._minimum_tracking_step(yaw_correction_raw, pixel_error_x)
+        pitch_correction_raw = self._minimum_tracking_step(pitch_correction_raw, pixel_error_y)
 
         # Calculate desired servo positions
         desired_yaw = self.current_yaw + yaw_correction_raw
@@ -1218,6 +1311,8 @@ class CameraTracker:
         # Clamp to valid servo ranges
         desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
         desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
+        desired_yaw = self._limit_tracking_step(self.current_yaw, desired_yaw, self.max_yaw_step)
+        desired_pitch = self._limit_tracking_step(self.current_pitch, desired_pitch, self.max_pitch_step)
 
         # Debug output (optional - can be removed for production)
         print(f"   PID Debug:")
@@ -1294,7 +1389,7 @@ class CameraTracker:
             print(f"Video frame capture error: {e}")
 
     def run_inference(self):
-        """Run inference at 7 FPS using shared inference module"""
+        """Run one inference pass using the shared inference module"""
         if not self.camera_active or not self.camera or not self.model:
             return
 
@@ -1337,8 +1432,14 @@ class CameraTracker:
                 verbose=False
             )
 
-            # Extract detections using shared utility (filter for 'rat' class)
-            detections = extract_detections(results, self.model, target_class='rat')
+            # Extract detections using shared utility and keep configured target classes.
+            if self.target_classes:
+                detections = []
+                for target_class in self.target_classes:
+                    detections.extend(extract_detections(results, self.model, target_class=target_class))
+            else:
+                detections = extract_detections(results, self.model)
+            detections.sort(key=lambda det: det["confidence"], reverse=True)
 
             # Process first detection (if any)
             detection = False
@@ -1353,9 +1454,13 @@ class CameraTracker:
                 det = detections[0]
                 detection = True
                 confidence = det['confidence']
+                class_name = det.get('class_name', 'object')
                 bbox = det['bbox']
                 center_point = det['center']
                 center_x, center_y = center_point
+                tracking_center_x, tracking_center_y = self.smooth_tracking_center(center_x, center_y)
+                if (tracking_center_x, tracking_center_y) != (center_x, center_y):
+                    print(f"   Tracking center: raw=({center_x}, {center_y}), smoothed=({tracking_center_x}, {tracking_center_y})")
 
                 # Calculate depth if stereo calibration is available
                 if self.stereo_calibration_enabled and frame_right is not None:
@@ -1367,21 +1472,21 @@ class CameraTracker:
                 # Save detection image
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 detection_filename = f"detection_{timestamp}.jpg"
-                detection_path = f"detections/{detection_filename}"
+                detection_path = os.path.join(self.detections_dir, detection_filename)
                 cv2.imwrite(detection_path, frame)
 
                 self.detection_count += 1
                 # Format: "time - message | filename" so the UI can parse and link it
                 depth_str = f" @ {depth_mm/1000.0:.2f}m" if depth_mm else ""
-                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - Rat detected (conf: {confidence:.3f}) at ({center_x}, {center_y}){depth_str} | {detection_filename}"
+                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - {class_name} detected (conf: {confidence:.3f}) at ({center_x}, {center_y}){depth_str} | {detection_filename}"
                 self.recent_detections.append(detection_msg)
                 self.recent_detections = self.recent_detections[-10:]
 
-                print(f"🐀 Detection #{self.detection_count}: {detection_path}")
-                print(f"   Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
+                print(f"🎯 Detection #{self.detection_count}: {detection_path}")
+                print(f"   Class: {class_name}, Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
 
                 # Get updated servo positions from observe function
-                desired_yaw, desired_pitch = self.observe(center_x, center_y)
+                desired_yaw, desired_pitch = self.observe(tracking_center_x, tracking_center_y)
                 print(f"   Servo update: Yaw {self.current_yaw} -> {desired_yaw}, Pitch {self.current_pitch} -> {desired_pitch}")
 
                 # Update servo positions
@@ -1391,6 +1496,8 @@ class CameraTracker:
                 # Auto-trigger disabled - only trigger manually via button
                 # if detection and not self.latest_detection and self.trigger_servo_enabled:
                 #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
+            else:
+                self.smoothed_tracking_center = None
 
             # Update detection state
             with self.inference_lock:
@@ -1424,10 +1531,19 @@ class CameraTracker:
             time.sleep(1.0 / VIDEO_FPS)  # 30 FPS
 
     def inference_thread(self):
-        """Inference processing thread at 15 FPS"""
+        """Inference processing thread"""
         while self.camera_active:
+            loop_start = time.time()
             self.run_inference()
-            time.sleep(1.0 / INFERENCE_FPS)  
+            self.inference_loop_count += 1
+            window_elapsed = time.time() - self.inference_fps_window_start
+            if window_elapsed >= 5.0:
+                actual_fps = self.inference_loop_count / window_elapsed
+                print(f"Inference actual FPS: {actual_fps:.1f} (target {self.inference_fps:g})", flush=True)
+                self.inference_loop_count = 0
+                self.inference_fps_window_start = time.time()
+            elapsed = time.time() - loop_start
+            time.sleep(max(0.0, (1.0 / self.inference_fps) - elapsed))
 
     def start_camera_thread(self):
         """Start the camera processing thread"""
@@ -1439,7 +1555,7 @@ class CameraTracker:
         """Start the inference processing thread"""
         thread = threading.Thread(target=self.inference_thread, daemon=True)
         thread.start()
-        print(f"Inference thread started ({INFERENCE_FPS} FPS)")
+        print(f"Inference thread started ({self.inference_fps:g} FPS target)")
 
     def disconnect(self):
         """Disconnect and cleanup"""
@@ -1479,6 +1595,10 @@ def run_api_server(host="0.0.0.0", port=8000):
     uvicorn.run(app, host=host, port=port, log_level="error")
 
 def main():
+    detection_config = CONFIG.get('detection', {}) if CONFIG else {}
+    tracking_config = CONFIG.get('tracking', {}) if CONFIG else {}
+    auto_tracking_config = tracking_config.get('auto_tracking', {})
+
     parser = argparse.ArgumentParser(description="Camera tracker with servo control and rat detection")
 
     # Servo settings
@@ -1500,14 +1620,24 @@ def main():
                        help="Use CSI camera with GStreamer pipeline (Jetson)")
     parser.add_argument("--invert-camera", action="store_true",
                        help="Invert camera 180 degrees for upside-down mounting")
-    parser.add_argument("--model", "-m", type=str, default="runs/yolo11n-2025-10-24/weights/best.pt",
+    parser.add_argument("--model", "-m", type=str, default=detection_config.get("model_path", "runs/yolo11n-2025-10-24/weights/best.pt"),
                        help="Path to YOLO model")
     parser.add_argument("--disable-detection", action="store_true",
                        help="Disable YOLO detection while keeping the camera stream enabled")
-    parser.add_argument("--confidence", "-c", type=float, default=0.75,
+    parser.add_argument("--confidence", "-c", type=float, default=float(detection_config.get("confidence_threshold", 0.75)),
                        help="Detection confidence threshold")
-    parser.add_argument("--imgsz", type=int, default=640,
+    parser.add_argument("--target-class", action="append", default=None,
+                       help="YOLO class name to track. Repeat or comma-separate values. Default: all model classes")
+    parser.add_argument("--imgsz", type=int, default=int(detection_config.get("imgsz", 640)),
                        help="Inference image size in pixels (default: 640)")
+    parser.add_argument("--inference-fps", type=float, default=None,
+                       help=f"Target inference loop FPS (default: {INFERENCE_FPS})")
+    parser.add_argument("--tracking-smoothing", type=float, default=float(auto_tracking_config.get("smoothing_alpha", 0.45)),
+                       help="Detection center smoothing alpha for auto tracking: 0 disables, 1 follows raw detections (default: 0.45)")
+    parser.add_argument("--max-yaw-step", type=int, default=int(auto_tracking_config.get("max_yaw_step", 45)),
+                       help="Maximum yaw raw-unit move per inference update for smoother tracking (default: 45)")
+    parser.add_argument("--max-pitch-step", type=int, default=int(auto_tracking_config.get("max_pitch_step", 28)),
+                       help="Maximum pitch raw-unit move per inference update for smoother tracking (default: 28)")
     parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
                        help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
     parser.add_argument("--stereo", action="store_true",
@@ -1526,6 +1656,13 @@ def main():
                        help="Port for FastAPI server")
 
     args = parser.parse_args()
+
+    if args.target_class is None:
+        configured_targets = detection_config.get("target_classes")
+        if isinstance(configured_targets, str):
+            args.target_class = [configured_targets]
+        elif configured_targets:
+            args.target_class = list(configured_targets)
 
     if args.video_only:
         args.enable_camera = True
@@ -1556,9 +1693,14 @@ def main():
         use_csi=args.use_csi,
         invert_camera=args.invert_camera,
         imgsz=args.imgsz,
+        inference_fps=args.inference_fps,
+        target_classes=args.target_class,
         calibration_file=args.calibration,
         stereo_mode=args.stereo,
-        baseline_override=args.baseline_override
+        baseline_override=args.baseline_override,
+        tracking_smoothing=args.tracking_smoothing,
+        max_yaw_step=args.max_yaw_step,
+        max_pitch_step=args.max_pitch_step
     )
     control_api.set_tracker(tracker)
 
@@ -1577,8 +1719,12 @@ def main():
     print(f"Detection: {'ENABLED' if model_path else 'DISABLED'}")
     if model_path:
         print(f"Model: {args.model}")
+        target_classes = ", ".join(tracker.target_classes) if tracker.target_classes else "all"
+        print(f"Target classes: {target_classes}")
         print(f"Confidence threshold: {args.confidence}")
         print(f"Inference image size: {args.imgsz}px")
+        print(f"Inference FPS target: {tracker.inference_fps:g}")
+        print(f"Tracking smoothing: alpha={tracker.tracking_smoothing:g}, max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}")
     calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
     if tracker.calibration_enabled:
         calib_type = "STEREO" if tracker.stereo_calibration_enabled else "SINGLE"

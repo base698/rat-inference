@@ -122,28 +122,54 @@ uv run python tools/vision/inference/inference.py --input image.jpg --model runs
 Run the real-time camera tracker with servo control:
 
 ```bash
-# With camera and detection (default 640px)
-uv run python rt_200.py \
+# With camera and detection using config.yaml defaults
+uv run --extra jetson python rt_200.py \
   --enable-camera \
   --use-csi \
-  --enable-trigger \
-  --confidence 0.75
+  --stereo \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
+  --baseline-override 57.5 \
+  --port /dev/ttyACM0
 
 # With larger inference size (1024px) - slower but more accurate
-uv run python rt_200.py \
+uv run --extra jetson python rt_200.py \
   --enable-camera \
   --use-csi \
-  --enable-trigger \
+  --stereo \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
+  --baseline-override 57.5 \
+  --port /dev/ttyACM0 \
   --imgsz 1024 \
-  --confidence 0.75
+  --inference-fps 4
 
 # Web interface only (no servos)
 uv run python rt_200.py --no-connect --enable-camera --use-csi
 ```
 
+The custom rat models currently expose a single YOLO class named `item`, not `rat`. By default, `config.yaml` sets `target_classes: [item]`; omit `--target-class` to use the configured target, or pass `--target-class all` to accept every class from the loaded model.
+
+Current preferred rat auto-tracking command:
+
+```bash
+uv run --extra jetson python rt_200.py \
+  --enable-camera \
+  --use-csi \
+  --stereo \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
+  --baseline-override 57.5 \
+  --port /dev/ttyACM0 \
+  --model runs/yolo11n-2025-10-23/weights/best.pt \
+  --target-class item \
+  --confidence 0.60 \
+  --inference-fps 14 \
+  --tracking-smoothing 0.45 \
+  --max-yaw-step 45 \
+  --max-pitch-step 28
+```
+
 #### Stereo Depth + Laser Tracking
 
-Current working command for CSI stereo cameras, Feetech tracking servos, stereo depth, and laser/camera vertical compensation:
+Current working command for CSI stereo cameras, Feetech tracking servos, stereo depth, and laser/camera vertical compensation without detection:
 
 ```bash
 uv run --extra jetson python rt_200.py \
@@ -196,9 +222,20 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 **Access web interface:** `http://localhost:8000`
 
 **Performance Notes:**
-- `imgsz=640`: ~7 FPS on Jetson Nano (default)
-- `imgsz=1024`: ~2-4 FPS on Jetson Nano (more accurate)
-- Start with 640 and test higher sizes based on your needs
+- `--inference-fps` is a scheduling target, not guaranteed throughput.
+- The tracker logs `Inference actual FPS` every few seconds. In live 640px stereo tracking tests, the current Python/Ultralytics path measured about `1.3-1.5` actual FPS despite a 14 FPS target.
+- Keep `--inference-fps 14` as an upper cap for now, but real 10+ FPS will likely require optimization such as shared camera frames, less frequent depth calculation, or an exported TensorRT/ONNX model.
+- `imgsz=1024` is not recommended for live tracking until the 640px path is faster.
+
+**Tracking Smoothness:**
+- `--tracking-smoothing` low-pass filters the detected center before servo control. Lower values are smoother but laggier; `0.45` is the current default.
+- `--max-yaw-step` and `--max-pitch-step` cap per-inference servo moves in raw units. Lower values reduce jerk but slow convergence.
+- The current PID gains are intentionally more aggressive than the original values; smoothing and step caps keep that from snapping too hard between detections.
+
+**Model Notes:**
+- `runs/yolo11n-2025-10-23/weights/best.pt` is the current preferred live tracking model.
+- `runs/yolo11n-2025-10-24/weights/best.pt` is kept for comparison but performed worse in live testing.
+- Both custom rat models expose their target class as `item`.
 
 #### Stereo Recalibration
 
@@ -294,9 +331,12 @@ rat-inference/
 │       ├── labels/{train,val}/       # YOLO labels
 │       └── unsorted/                 # Generated or pending images
 ├── runs/                             # Training outputs
-│   └── yolo11n-2025-10-24/
+│   ├── yolo11n-2025-10-23/             # Current preferred live tracking model
+│   │   └── weights/
+│   │       └── best.pt
+│   └── yolo11n-2025-10-24/             # Comparison model
 │       └── weights/
-│           └── best.pt               # Current trained model used by examples
+│           └── best.pt
 ├── Dockerfile
 ├── run.sh
 └── pyproject.toml                    # Dependencies with optional groups
@@ -357,7 +397,7 @@ python tools/vision/inference/inference.py --imgsz 640   # Default
 python tools/vision/inference/inference.py --imgsz 1024  # Larger inference size
 
 # Real-time tracking
-python rt_200.py --imgsz 640   # Default, ~7 FPS on Jetson
+python rt_200.py --imgsz 640 --inference-fps 14   # Current real-time tracking target
 python rt_200.py --imgsz 1024  # Higher accuracy, ~2-4 FPS on Jetson
 ```
 
@@ -408,10 +448,14 @@ uv run python rt_200.py \
   --port /dev/ttyACM0 \
   --enable-camera \
   --use-csi \
-  --enable-trigger \
-  --model runs/yolo11n-2025-10-24/weights/best.pt \
-  --confidence 0.75 \
-  --imgsz 640
+  --stereo \
+  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
+  --baseline-override 57.5 \
+  --model runs/yolo11n-2025-10-23/weights/best.pt \
+  --target-class item \
+  --confidence 0.60 \
+  --imgsz 640 \
+  --inference-fps 14
 
 # Access web interface at http://<jetson-ip>:8000
 ```
@@ -422,11 +466,11 @@ uv run python rt_200.py \
 
 | Image Size | FPS | Accuracy | Use Case |
 |------------|-----|----------|----------|
-| 640px | ~7 | Good | Real-time tracking |
-| 800px | ~4-5 | Better | Balanced |
-| 1024px | ~2-4 | Best | High accuracy |
+| 640px | ~1.3-1.5 observed, 14 target cap | Good | Current live tracking |
+| 800px | Lower | Better | Offline testing |
+| 1024px | Much lower | Best | Offline/high-accuracy testing |
 
-**Recommendation:** Start with 640px. Test 1024px if you need higher accuracy and can accept lower FPS.
+**Recommendation:** Use 640px at `--inference-fps 14` for now, and optimize the inference pipeline before raising image size.
 
 ## Configuration Files
 

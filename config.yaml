@@ -71,9 +71,17 @@ tracking:
 
   crosshair_size: 20   # Size of crosshair in pixels
 
+  # Auto tracking smoothing
+  # smoothing_alpha is the weight of the newest detection center. Lower is smoother but laggier.
+  # max_*_step caps per-inference servo jumps in raw units to reduce jerky motion.
+  auto_tracking:
+    smoothing_alpha: 0.45
+    max_yaw_step: 45
+    max_pitch_step: 28
+
   # Frame rates
   video_fps: 30        # Video display frame rate
-  inference_fps: 7     # Inference frame rate
+  inference_fps: 14    # Inference frame rate target
 
 # Camera FOV calibration (used for pixel-to-angle conversion)
 camera:
@@ -85,22 +93,24 @@ camera:
 # PID Controller Gains
 pid:
   yaw:
-    kp: 0.3    # Proportional gain
+    kp: 0.85   # Proportional gain
     ki: 0.01   # Integral gain
-    kd: 0.1    # Derivative gain
+    kd: 0.03   # Derivative gain
 
   pitch:
-    kp: 0.3    # Proportional gain
+    kp: 0.85   # Proportional gain
     ki: 0.01   # Integral gain
-    kd: 0.1    # Derivative gain
+    kd: 0.03   # Derivative gain
 
   max_integral: 10.0   # Anti-windup limit in degrees
 
 # Detection Configuration
 detection:
-  confidence_threshold: 0.75
+  confidence_threshold: 0.60
   imgsz: 640
-  model_path: "runs/yolo11n-2025-10-24/weights/best.pt"
+  model_path: "runs/yolo11n-2025-10-23/weights/best.pt"
+  target_classes:
+    - item
 
 # Notes:
 # - pitch_compensation adjusts the target crosshair Y position based on current pitch
