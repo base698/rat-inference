@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Real-time camera tracking with Feetech servo control and rat detection
-Controls yaw (ID 1, 1500-3500 raw) and pitch (ID 2, 0-600 raw) servos
+Controls yaw (ID 1, 1600-3100 raw) and pitch (ID 5, 1-500 raw) servos
 Includes Raspberry Pi camera streaming, YOLO inference, and GPIO trigger servo
 """
 
@@ -104,7 +104,7 @@ else:
     YAW_MIN = 1600
     YAW_MAX = 3100
     YAW_CENTER = 2200
-    PITCH_MIN = 0
+    PITCH_MIN = 1
     PITCH_MAX = 500
     PITCH_CENTER = 250
     TRIGGER_PWM_CHIP = 0
@@ -268,6 +268,230 @@ control_api = create_control_app(
 )
 app = control_api.app
 
+
+class AngularTargetBelief:
+    """Thread-safe angular target belief updated by vision observations."""
+
+    def __init__(self, update_alpha=0.45, miss_decay=0.94,
+                 min_confidence=0.15, max_age=1.5, reseed_distance_raw=160):
+        self.update_alpha = max(0.0, min(1.0, float(update_alpha)))
+        self.miss_decay = max(0.0, min(1.0, float(miss_decay)))
+        self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
+        self.max_age = max(0.0, float(max_age))
+        self.reseed_distance_raw = max(0.0, float(reseed_distance_raw))
+        self.lock = threading.Lock()
+        self.yaw = None
+        self.pitch = None
+        self.confidence = 0.0
+        self.last_update = 0.0
+
+    def update(self, yaw, pitch, confidence):
+        now = time.time()
+        confidence = max(0.0, min(1.0, float(confidence)))
+
+        with self.lock:
+            age = now - self.last_update if self.last_update else float("inf")
+            stale = self.max_age > 0 and age > self.max_age
+            weak = self.confidence < self.min_confidence
+            jump = 0.0
+            if self.yaw is not None and self.pitch is not None:
+                jump = max(abs(float(yaw) - self.yaw), abs(float(pitch) - self.pitch))
+            large_jump = self.reseed_distance_raw > 0 and jump > self.reseed_distance_raw
+
+            reseed_reason = None
+            if self.yaw is None or self.pitch is None or self.confidence <= 0:
+                reseed_reason = "empty"
+            elif stale:
+                reseed_reason = "stale"
+            elif weak:
+                reseed_reason = "weak"
+            elif large_jump:
+                reseed_reason = f"jump {jump:.0f}"
+
+            if reseed_reason:
+                self.yaw = float(yaw)
+                self.pitch = float(pitch)
+            else:
+                self.yaw += self.update_alpha * (float(yaw) - self.yaw)
+                self.pitch += self.update_alpha * (float(pitch) - self.pitch)
+
+            self.confidence = min(1.0, max(confidence, self.confidence * 0.85 + confidence * 0.35))
+            self.last_update = now
+            snapshot = self.snapshot_locked(now)
+            snapshot["reseeded"] = reseed_reason is not None
+            snapshot["reseed_reason"] = reseed_reason
+            return snapshot
+
+    def clear(self):
+        with self.lock:
+            self.yaw = None
+            self.pitch = None
+            self.confidence = 0.0
+            self.last_update = 0.0
+            return self.snapshot_locked(time.time())
+
+    def decay(self):
+        with self.lock:
+            if self.confidence <= 0:
+                return
+
+            self.confidence *= self.miss_decay
+            if self.confidence < 0.01:
+                self.confidence = 0.0
+
+    def snapshot_locked(self, now=None):
+        if now is None:
+            now = time.time()
+        age = now - self.last_update if self.last_update else float("inf")
+        return {
+            "yaw": self.yaw,
+            "pitch": self.pitch,
+            "confidence": self.confidence,
+            "age": age,
+        }
+
+    def get_active(self):
+        with self.lock:
+            if self.yaw is None or self.pitch is None:
+                return None
+
+            snapshot = self.snapshot_locked()
+            if (
+                snapshot["confidence"] < self.min_confidence
+                or (self.max_age > 0 and snapshot["age"] > self.max_age)
+            ):
+                return None
+
+            return snapshot
+
+
+class AngularBeliefController:
+    """Control loop that reads target belief and moves a robot interface toward it."""
+
+    def __init__(self, robot, belief, control_fps=20,
+                 max_yaw_step=45, max_pitch_step=45,
+                 deadband_raw=4, min_step_raw=3):
+        self.robot = robot
+        self.belief = belief
+        self.control_fps = max(1.0, float(control_fps))
+        self.max_yaw_step = max(0, int(max_yaw_step))
+        self.max_pitch_step = max(0, int(max_pitch_step))
+        self.deadband_raw = max(0, int(deadband_raw))
+        self.min_step_raw = max(0, int(min_step_raw))
+        self.yaw_integral = 0.0
+        self.pitch_integral = 0.0
+        self.yaw_prev_error = 0.0
+        self.pitch_prev_error = 0.0
+        self.last_time = time.time()
+        self.loop_count = 0
+        self.window_start = time.time()
+
+    def reset(self):
+        self.yaw_integral = 0.0
+        self.pitch_integral = 0.0
+        self.yaw_prev_error = 0.0
+        self.pitch_prev_error = 0.0
+        self.last_time = time.time()
+
+    def _minimum_raw_step(self, raw_delta, raw_error):
+        if (
+            self.min_step_raw <= 0
+            or abs(raw_error) <= self.deadband_raw
+            or abs(raw_delta) >= self.min_step_raw
+        ):
+            return raw_delta
+
+        return self.min_step_raw if raw_error > 0 else -self.min_step_raw
+
+    def _limit_step(self, current_position, desired_position, max_step):
+        if max_step <= 0:
+            return desired_position
+
+        delta = desired_position - current_position
+        if abs(delta) <= max_step:
+            return desired_position
+
+        return current_position + (max_step if delta > 0 else -max_step)
+
+    def track_once(self):
+        belief = self.belief.get_active()
+        if belief is None:
+            return
+
+        current_time = time.time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
+        if dt < 0.001:
+            dt = 0.001
+
+        yaw_error_raw = belief["yaw"] - self.robot.current_yaw
+        pitch_error_raw = belief["pitch"] - self.robot.current_pitch
+
+        if abs(yaw_error_raw) <= self.deadband_raw and abs(pitch_error_raw) <= self.deadband_raw:
+            return
+
+        angle_error_yaw = self.robot.servo_raw_to_angle(yaw_error_raw, axis='yaw')
+        angle_error_pitch = self.robot.servo_raw_to_angle(pitch_error_raw, axis='pitch')
+
+        yaw_p = self.robot.pid_yaw_kp * angle_error_yaw
+        self.yaw_integral += angle_error_yaw * dt
+        self.yaw_integral = max(-self.robot.pid_max_integral, min(self.robot.pid_max_integral, self.yaw_integral))
+        yaw_i = self.robot.pid_yaw_ki * self.yaw_integral
+        yaw_d = self.robot.pid_yaw_kd * (angle_error_yaw - self.yaw_prev_error) / dt
+        self.yaw_prev_error = angle_error_yaw
+
+        pitch_p = self.robot.pid_pitch_kp * angle_error_pitch
+        self.pitch_integral += angle_error_pitch * dt
+        self.pitch_integral = max(-self.robot.pid_max_integral, min(self.robot.pid_max_integral, self.pitch_integral))
+        pitch_i = self.robot.pid_pitch_ki * self.pitch_integral
+        pitch_d = self.robot.pid_pitch_kd * (angle_error_pitch - self.pitch_prev_error) / dt
+        self.pitch_prev_error = angle_error_pitch
+
+        yaw_correction_raw = self.robot.angle_to_servo_raw(yaw_p + yaw_i + yaw_d, axis='yaw')
+        pitch_correction_raw = self.robot.angle_to_servo_raw(pitch_p + pitch_i + pitch_d, axis='pitch')
+        yaw_correction_raw = self._minimum_raw_step(yaw_correction_raw, yaw_error_raw)
+        pitch_correction_raw = self._minimum_raw_step(pitch_correction_raw, pitch_error_raw)
+
+        desired_yaw = self.robot.current_yaw + yaw_correction_raw
+        desired_pitch = self.robot.current_pitch + pitch_correction_raw
+        desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
+        desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
+        desired_yaw = self._limit_step(self.robot.current_yaw, desired_yaw, self.max_yaw_step)
+        desired_pitch = self._limit_step(self.robot.current_pitch, desired_pitch, self.max_pitch_step)
+
+        if desired_yaw == self.robot.current_yaw and desired_pitch == self.robot.current_pitch:
+            return
+
+        print(
+            "   Belief control: "
+            f"belief=({belief['yaw']:.1f}, {belief['pitch']:.1f}, conf={belief['confidence']:.2f}, age={belief['age']:.2f}s), "
+            f"error_raw=({yaw_error_raw:.1f}, {pitch_error_raw:.1f}), "
+            f"move=({self.robot.current_yaw}->{desired_yaw}, {self.robot.current_pitch}->{desired_pitch})"
+        )
+
+        self.robot.set_yaw(desired_yaw)
+        self.robot.set_pitch(desired_pitch)
+
+    def run(self):
+        while self.robot.camera_active:
+            loop_start = time.time()
+            self.track_once()
+            self.loop_count += 1
+            window_elapsed = time.time() - self.window_start
+            if window_elapsed >= 5.0:
+                actual_fps = self.loop_count / window_elapsed
+                print(f"Tracking control actual FPS: {actual_fps:.1f} (target {self.control_fps:g})", flush=True)
+                self.loop_count = 0
+                self.window_start = time.time()
+            elapsed = time.time() - loop_start
+            time.sleep(max(0.0, (1.0 / self.control_fps) - elapsed))
+
+    def start(self):
+        thread = threading.Thread(target=self.run, daemon=True)
+        thread.start()
+        print(f"Tracking control thread started ({self.control_fps:g} FPS target)")
+
+
 class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
@@ -275,7 +499,12 @@ class CameraTracker:
                  use_csi=False, invert_camera=False, imgsz=640,
                  inference_fps=None, target_classes=None, calibration_file=None,
                  stereo_mode=False, baseline_override=None,
-                 tracking_smoothing=0.45, max_yaw_step=45, max_pitch_step=28):
+                 tracking_smoothing=0.45, max_yaw_step=45, max_pitch_step=45,
+                 tracking_control_fps=20, belief_update_alpha=0.45,
+                 belief_miss_decay=0.94, belief_min_confidence=0.15,
+                 belief_max_age=1.5, belief_deadband_raw=4,
+                 belief_min_step_raw=3, pitch_tracking_scale=1.0,
+                 belief_reseed_distance_raw=160):
         """
         Initialize the camera tracker
 
@@ -298,7 +527,16 @@ class CameraTracker:
             baseline_override: Override baseline in mm (if calibration is incorrect)
             tracking_smoothing: Detection center smoothing alpha (0 disables, 1 follows raw detections)
             max_yaw_step: Maximum yaw raw-unit move per inference update
-            max_pitch_step: Maximum pitch raw-unit move per inference update
+            max_pitch_step: Maximum pitch raw-unit move per control update
+            tracking_control_fps: Servo control loop rate for angular target belief tracking
+            belief_update_alpha: Weight of new observations when updating target belief
+            belief_miss_decay: Confidence decay applied on inference ticks without detections
+            belief_min_confidence: Minimum belief confidence required for control loop movement
+            belief_max_age: Maximum age in seconds for target belief movement
+            belief_deadband_raw: Raw servo-unit error treated as centered
+            belief_min_step_raw: Minimum raw servo-unit correction while outside deadband
+            pitch_tracking_scale: Multiplier for vertical image error to pitch raw observation
+            belief_reseed_distance_raw: Observation jump that starts a fresh belief
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -324,6 +562,15 @@ class CameraTracker:
         self.tracking_smoothing = max(0.0, min(1.0, float(tracking_smoothing)))
         self.max_yaw_step = max(0, int(max_yaw_step))
         self.max_pitch_step = max(0, int(max_pitch_step))
+        self.tracking_control_fps = max(1.0, float(tracking_control_fps))
+        self.belief_update_alpha = max(0.0, min(1.0, float(belief_update_alpha)))
+        self.belief_miss_decay = max(0.0, min(1.0, float(belief_miss_decay)))
+        self.belief_min_confidence = max(0.0, min(1.0, float(belief_min_confidence)))
+        self.belief_max_age = max(0.0, float(belief_max_age))
+        self.belief_deadband_raw = max(0, int(belief_deadband_raw))
+        self.belief_min_step_raw = max(0, int(belief_min_step_raw))
+        self.pitch_tracking_scale = max(0.1, float(pitch_tracking_scale))
+        self.belief_reseed_distance_raw = max(0.0, float(belief_reseed_distance_raw))
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
@@ -366,6 +613,18 @@ class CameraTracker:
         self.stereo_min_disparity = 0
         self.stereo_num_disparities = 192
         self.stereo_disparity_sign = 1
+        tracking_config = CONFIG.get('tracking', {}) if CONFIG else {}
+        self.depth_min_texture_std = float(tracking_config.get('depth_min_texture_std', 4.0))
+        self.depth_adjust_smoothing_alpha = max(
+            0.0,
+            min(1.0, float(tracking_config.get('depth_adjust_smoothing_alpha', 0.20)))
+        )
+        self.depth_adjust_missing_decay = max(
+            0.0,
+            min(1.0, float(tracking_config.get('depth_adjust_missing_decay', 0.85)))
+        )
+        self.display_depth_adjust_px = 0.0
+        self.display_depth_adjust_initialized = False
         self.last_depth_debug = "not computed"
 
         if self.calibration_file:
@@ -410,6 +669,23 @@ class CameraTracker:
         self.yaw_range_degrees = 180.0    # Total yaw range in degrees
         self.pitch_range_degrees = 55.0   # Total pitch range in degrees
 
+        self.target_belief = AngularTargetBelief(
+            update_alpha=belief_update_alpha,
+            miss_decay=belief_miss_decay,
+            min_confidence=belief_min_confidence,
+            max_age=belief_max_age,
+            reseed_distance_raw=belief_reseed_distance_raw
+        )
+        self.tracking_controller = AngularBeliefController(
+            robot=self,
+            belief=self.target_belief,
+            control_fps=tracking_control_fps,
+            max_yaw_step=self.max_yaw_step,
+            max_pitch_step=self.max_pitch_step,
+            deadband_raw=belief_deadband_raw,
+            min_step_raw=belief_min_step_raw
+        )
+
         # Create detections directory
         self.detections_dir = DETECTIONS_DIR
         os.makedirs(self.detections_dir, exist_ok=True)
@@ -435,6 +711,7 @@ class CameraTracker:
             self.start_camera_thread()
             if self.model:
                 self.start_inference_thread()
+                self.start_tracking_control_thread()
 
     @staticmethod
     def _normalize_target_classes(target_classes):
@@ -708,6 +985,16 @@ class CameraTracker:
 
             if x < 0 or x >= disparity.shape[1] or y < 0 or y >= disparity.shape[0]:
                 self.last_depth_debug = f"rectified point out of frame ({x}, {y})"
+                return None
+
+            texture_radius = 16
+            tx1 = max(0, x - texture_radius)
+            tx2 = min(gray_left.shape[1], x + texture_radius + 1)
+            ty1 = max(0, y - texture_radius)
+            ty2 = min(gray_left.shape[0], y + texture_radius + 1)
+            texture_std = float(np.std(gray_left[ty1:ty2, tx1:tx2]))
+            if texture_std < self.depth_min_texture_std:
+                self.last_depth_debug = f"low texture {texture_std:.1f}"
                 return None
 
             # Use the median of valid disparities around the point to reduce pixel noise.
@@ -1032,6 +1319,25 @@ class CameraTracker:
         if self.enable_servos:
             self.raw_write("pitch", position)
 
+    def smooth_display_depth_adjust(self, target_adjust_px):
+        """Smooth the visual crosshair depth offset without affecting tracking math."""
+        if target_adjust_px is None:
+            self.display_depth_adjust_px *= self.depth_adjust_missing_decay
+            if abs(self.display_depth_adjust_px) < 0.2:
+                self.display_depth_adjust_px = 0.0
+                self.display_depth_adjust_initialized = False
+            return self.display_depth_adjust_px
+
+        target_adjust_px = float(target_adjust_px)
+        if not self.display_depth_adjust_initialized:
+            self.display_depth_adjust_px = target_adjust_px
+            self.display_depth_adjust_initialized = True
+            return self.display_depth_adjust_px
+
+        alpha = self.depth_adjust_smoothing_alpha
+        self.display_depth_adjust_px += alpha * (target_adjust_px - self.display_depth_adjust_px)
+        return self.display_depth_adjust_px
+
     def draw_overlays(self, frame, frame_right=None):
         """Draw crosshair, bounding box, and center point on image (OpenCV)"""
         # Draw target crosshair (dynamic position based on yaw and pitch)
@@ -1057,6 +1363,7 @@ class CameraTracker:
         # Calculate depth at crosshair if stereo is available
         crosshair_depth_m = None
         depth_adjust_px = 0.0
+        depth_adjust_target_px = None
         depth_text = None
         depth_color = (0, 255, 0)
         if self.stereo_calibration_enabled and frame_right is not None:
@@ -1071,8 +1378,7 @@ class CameraTracker:
 
                 depth_adjust = AIMING.depth_adjust_px(depth_mm, focal_y)
                 if depth_adjust is not None:
-                    depth_adjust_px = depth_adjust
-                    ch_y = int(round(ch_y + depth_adjust_px))
+                    depth_adjust_target_px = depth_adjust
                 depth_text = f"{crosshair_depth_m:.2f}m"
             else:
                 depth_text = f"-- {self.last_depth_debug}"
@@ -1080,6 +1386,10 @@ class CameraTracker:
         elif self.stereo_mode:
             depth_text = "-- no right frame/calibration"
             depth_color = (0, 200, 255)
+
+        depth_adjust_px = self.smooth_display_depth_adjust(depth_adjust_target_px)
+        if abs(depth_adjust_px) >= 0.2:
+            ch_y = int(round(ch_y + depth_adjust_px))
 
         if self._frame_counter % 30 == 0:  # Print once per second
             depth_debug = depth_text if depth_text is not None else "n/a"
@@ -1155,13 +1465,125 @@ class CameraTracker:
             raw_range = YAW_MAX - YAW_MIN
             raw_per_degree = raw_range / self.yaw_range_degrees
         else:  # pitch
-            # Pitch servo: 0-600 raw = 600 units over pitch_range_degrees
+            # Pitch servo: 1-500 raw = full up to full down over pitch_range_degrees
             raw_range = PITCH_MAX - PITCH_MIN
             raw_per_degree = raw_range / self.pitch_range_degrees
 
         # Convert angle to raw units
         raw_delta = angle_delta * raw_per_degree
         return int(raw_delta)
+
+    def servo_raw_to_angle(self, raw_delta, axis='yaw'):
+        """Convert servo raw-unit error to angular error in degrees."""
+        if axis == 'yaw':
+            raw_range = YAW_MAX - YAW_MIN
+            raw_per_degree = raw_range / self.yaw_range_degrees
+        else:
+            raw_range = PITCH_MAX - PITCH_MIN
+            raw_per_degree = raw_range / self.pitch_range_degrees
+
+        if raw_per_degree == 0:
+            return 0.0
+
+        return raw_delta / raw_per_degree
+
+    def target_crosshair_y_for_depth(self, depth_mm=None):
+        """Return the aiming crosshair Y used for tracking at the target depth."""
+        ch_y = get_target_crosshair_y(self.current_pitch)
+
+        if depth_mm is None:
+            return ch_y
+
+        focal_y = None
+        if self.K1 is not None:
+            focal_y = float(self.K1[1, 1])
+        elif self.camera_matrix is not None:
+            focal_y = float(self.camera_matrix[1, 1])
+
+        depth_adjust = AIMING.depth_adjust_px(depth_mm, focal_y)
+        if depth_adjust is None:
+            return ch_y
+
+        return int(round(ch_y + depth_adjust))
+
+    def pixel_to_target_position(self, target_x, target_y, depth_mm=None):
+        """
+        Convert a detected image point into the servo raw positions that would center it.
+        This is the angular/world-ish observation used by target belief tracking.
+        """
+        target_crosshair_x = get_target_crosshair_x(self.current_yaw)
+        target_crosshair_y = self.target_crosshair_y_for_depth(depth_mm)
+        pixel_offset_x = target_x - target_crosshair_x
+        pixel_offset_y = target_y - target_crosshair_y
+
+        angle_offset_yaw = self.pixels_to_angle(
+            pixel_offset_x,
+            self.image_width,
+            self.camera_fov_horizontal
+        )
+        angle_offset_pitch = self.pixels_to_angle(
+            pixel_offset_y,
+            self.image_height,
+            self.camera_fov_vertical
+        )
+
+        yaw_offset_raw = self.angle_to_servo_raw(angle_offset_yaw, axis='yaw')
+        pitch_offset_raw = int(round(
+            self.angle_to_servo_raw(angle_offset_pitch, axis='pitch') * self.pitch_tracking_scale
+        ))
+        observed_yaw = max(YAW_MIN, min(YAW_MAX, self.current_yaw + yaw_offset_raw))
+        observed_pitch = max(PITCH_MIN, min(PITCH_MAX, self.current_pitch + pitch_offset_raw))
+
+        return {
+            "yaw": observed_yaw,
+            "pitch": observed_pitch,
+            "pixel_error_x": pixel_offset_x,
+            "pixel_error_y": pixel_offset_y,
+            "angle_error_yaw": angle_offset_yaw,
+            "angle_error_pitch": angle_offset_pitch,
+            "yaw_offset_raw": yaw_offset_raw,
+            "pitch_offset_raw": pitch_offset_raw,
+        }
+
+    def update_target_belief(self, center_x, center_y, confidence, depth_mm=None):
+        """Update angular target belief from one detection observation."""
+        observation = self.pixel_to_target_position(center_x, center_y, depth_mm=depth_mm)
+        belief = self.target_belief.update(observation["yaw"], observation["pitch"], confidence)
+
+        print(
+            "   Target belief: "
+            f"obs=({observation['yaw']}, {observation['pitch']}), "
+            f"belief=({belief['yaw']:.1f}, {belief['pitch']:.1f}), "
+            f"conf={belief['confidence']:.2f}, "
+            f"pixel_error=({observation['pixel_error_x']:.1f}, {observation['pixel_error_y']:.1f})"
+            f"{' reseed=' + belief['reseed_reason'] if belief.get('reseeded') else ''}"
+        )
+
+    def decay_target_belief(self):
+        """Decay angular target belief confidence after an inference tick without detections."""
+        self.target_belief.decay()
+
+    def clear_target_belief(self):
+        """Clear target belief and reset tracking controller state."""
+        self.target_belief.clear()
+        self.tracking_controller.reset()
+        self.smoothed_tracking_center = None
+        print("   Target belief cleared")
+        return True
+
+    def get_active_target_belief(self):
+        """Return active angular target belief if it is fresh and confident enough."""
+        return self.target_belief.get_active()
+
+    def _minimum_raw_step(self, raw_delta, raw_error):
+        if (
+            self.belief_min_step_raw <= 0
+            or abs(raw_error) <= self.belief_deadband_raw
+            or abs(raw_delta) >= self.belief_min_step_raw
+        ):
+            return raw_delta
+
+        return self.belief_min_step_raw if raw_error > 0 else -self.belief_min_step_raw
 
     def move_to_pixel(self, target_x, target_y):
         """
@@ -1175,44 +1597,15 @@ class CameraTracker:
         Returns:
             tuple: (desired_yaw, desired_pitch) servo positions in raw units
         """
-        # Calculate pixel offset from current crosshair to target
-        # Use dynamic crosshair positions based on current servo angles
-        target_crosshair_x = get_target_crosshair_x(self.current_yaw)
-        target_crosshair_y = get_target_crosshair_y(self.current_pitch)
-        pixel_offset_x = target_x - target_crosshair_x
-        pixel_offset_y = target_y - target_crosshair_y
-
-        # Convert pixel offsets to angular offsets (degrees)
-        angle_offset_yaw = self.pixels_to_angle(
-            pixel_offset_x,
-            self.image_width,
-            self.camera_fov_horizontal
-        )
-        angle_offset_pitch = self.pixels_to_angle(
-            pixel_offset_y,
-            self.image_height,
-            self.camera_fov_vertical
-        )
-
-        # Convert angular offsets to servo raw units
-        # Note: Right arrow increases yaw (e.g., 2734 → 2739), so right click = increase yaw
-        yaw_offset_raw = self.angle_to_servo_raw(angle_offset_yaw, axis='yaw')
-        # Note: Pitch servo moves same as screen direction (down click = increase pitch)
-        pitch_offset_raw = self.angle_to_servo_raw(angle_offset_pitch, axis='pitch')
-
-        # Calculate desired servo positions
-        desired_yaw = self.current_yaw + yaw_offset_raw
-        desired_pitch = self.current_pitch + pitch_offset_raw
-
-        # Clamp to valid servo ranges
-        desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
-        desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
+        observation = self.pixel_to_target_position(target_x, target_y)
+        desired_yaw = observation["yaw"]
+        desired_pitch = observation["pitch"]
 
         print(f"   Direct positioning:")
         print(f"     Target pixel: ({target_x}, {target_y})")
-        print(f"     Pixel offset: X={pixel_offset_x:.1f}px, Y={pixel_offset_y:.1f}px")
-        print(f"     Angle offset: Yaw={angle_offset_yaw:.2f}°, Pitch={angle_offset_pitch:.2f}°")
-        print(f"     Servo move: Yaw {self.current_yaw} → {desired_yaw} ({yaw_offset_raw:+d}), Pitch {self.current_pitch} → {desired_pitch} ({pitch_offset_raw:+d})")
+        print(f"     Pixel offset: X={observation['pixel_error_x']:.1f}px, Y={observation['pixel_error_y']:.1f}px")
+        print(f"     Angle offset: Yaw={observation['angle_error_yaw']:.2f}°, Pitch={observation['angle_error_pitch']:.2f}°")
+        print(f"     Servo move: Yaw {self.current_yaw} → {desired_yaw} ({observation['yaw_offset_raw']:+d}), Pitch {self.current_pitch} → {desired_pitch} ({observation['pitch_offset_raw']:+d})")
 
         return desired_yaw, desired_pitch
 
@@ -1322,6 +1715,10 @@ class CameraTracker:
         print(f"     Pitch PID: P={pitch_p:.3f}, I={pitch_i:.3f}, D={pitch_d:.3f} -> {pitch_correction_deg:.3f}° ({pitch_correction_raw} raw)")
 
         return desired_yaw, desired_pitch
+
+    def track_target_belief(self):
+        """Move servos toward the current angular target belief."""
+        self.tracking_controller.track_once()
 
     def capture_video_frame(self):
         """Capture a video frame at 30 FPS with overlays"""
@@ -1458,9 +1855,6 @@ class CameraTracker:
                 bbox = det['bbox']
                 center_point = det['center']
                 center_x, center_y = center_point
-                tracking_center_x, tracking_center_y = self.smooth_tracking_center(center_x, center_y)
-                if (tracking_center_x, tracking_center_y) != (center_x, center_y):
-                    print(f"   Tracking center: raw=({center_x}, {center_y}), smoothed=({tracking_center_x}, {tracking_center_y})")
 
                 # Calculate depth if stereo calibration is available
                 if self.stereo_calibration_enabled and frame_right is not None:
@@ -1485,19 +1879,15 @@ class CameraTracker:
                 print(f"🎯 Detection #{self.detection_count}: {detection_path}")
                 print(f"   Class: {class_name}, Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
 
-                # Get updated servo positions from observe function
-                desired_yaw, desired_pitch = self.observe(tracking_center_x, tracking_center_y)
-                print(f"   Servo update: Yaw {self.current_yaw} -> {desired_yaw}, Pitch {self.current_pitch} -> {desired_pitch}")
-
-                # Update servo positions
-                self.set_yaw(desired_yaw)
-                self.set_pitch(desired_pitch)
+                # Detection updates angular belief; the control loop moves servos toward it.
+                self.update_target_belief(center_x, center_y, confidence, depth_mm=depth_mm)
 
                 # Auto-trigger disabled - only trigger manually via button
                 # if detection and not self.latest_detection and self.trigger_servo_enabled:
                 #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
             else:
                 self.smoothed_tracking_center = None
+                self.decay_target_belief()
 
             # Update detection state
             with self.inference_lock:
@@ -1545,6 +1935,10 @@ class CameraTracker:
             elapsed = time.time() - loop_start
             time.sleep(max(0.0, (1.0 / self.inference_fps) - elapsed))
 
+    def tracking_control_thread(self):
+        """Servo control thread that continuously moves toward angular target belief."""
+        self.tracking_controller.run()
+
     def start_camera_thread(self):
         """Start the camera processing thread"""
         thread = threading.Thread(target=self.camera_thread, daemon=True)
@@ -1556,6 +1950,10 @@ class CameraTracker:
         thread = threading.Thread(target=self.inference_thread, daemon=True)
         thread.start()
         print(f"Inference thread started ({self.inference_fps:g} FPS target)")
+
+    def start_tracking_control_thread(self):
+        """Start the angular target belief servo control thread"""
+        self.tracking_controller.start()
 
     def disconnect(self):
         """Disconnect and cleanup"""
@@ -1636,8 +2034,26 @@ def main():
                        help="Detection center smoothing alpha for auto tracking: 0 disables, 1 follows raw detections (default: 0.45)")
     parser.add_argument("--max-yaw-step", type=int, default=int(auto_tracking_config.get("max_yaw_step", 45)),
                        help="Maximum yaw raw-unit move per inference update for smoother tracking (default: 45)")
-    parser.add_argument("--max-pitch-step", type=int, default=int(auto_tracking_config.get("max_pitch_step", 28)),
-                       help="Maximum pitch raw-unit move per inference update for smoother tracking (default: 28)")
+    parser.add_argument("--max-pitch-step", type=int, default=int(auto_tracking_config.get("max_pitch_step", 45)),
+                       help="Maximum pitch raw-unit move per control update for smoother tracking (default: 45)")
+    parser.add_argument("--tracking-control-fps", type=float, default=float(auto_tracking_config.get("control_fps", 20)),
+                       help="Servo control loop FPS for angular target belief tracking (default: 20)")
+    parser.add_argument("--belief-update-alpha", type=float, default=float(auto_tracking_config.get("belief_update_alpha", 0.45)),
+                       help="Angular belief update alpha from new detections: 0 ignores, 1 jumps to observation (default: 0.45)")
+    parser.add_argument("--belief-miss-decay", type=float, default=float(auto_tracking_config.get("belief_miss_decay", 0.94)),
+                       help="Belief confidence decay per inference tick without detection (default: 0.94)")
+    parser.add_argument("--belief-min-confidence", type=float, default=float(auto_tracking_config.get("belief_min_confidence", 0.15)),
+                       help="Minimum angular belief confidence required to keep moving (default: 0.15)")
+    parser.add_argument("--belief-max-age", type=float, default=float(auto_tracking_config.get("belief_max_age", 1.5)),
+                       help="Maximum age in seconds for angular belief movement (default: 1.5)")
+    parser.add_argument("--belief-deadband-raw", type=int, default=int(auto_tracking_config.get("belief_deadband_raw", 4)),
+                       help="Raw servo-unit error treated as centered by angular belief control (default: 4)")
+    parser.add_argument("--belief-min-step-raw", type=int, default=int(auto_tracking_config.get("belief_min_step_raw", 3)),
+                       help="Minimum raw servo-unit correction while outside angular belief deadband (default: 3)")
+    parser.add_argument("--pitch-tracking-scale", type=float, default=float(auto_tracking_config.get("pitch_tracking_scale", 1.0)),
+                       help="Multiplier for vertical image error to pitch raw observation; higher uses more down/up pitch travel (default: 1.0)")
+    parser.add_argument("--belief-reseed-distance-raw", type=float, default=float(auto_tracking_config.get("belief_reseed_distance_raw", 160)),
+                       help="Raw-unit observation jump that starts a fresh angular belief instead of smoothing (default: 160)")
     parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
                        help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
     parser.add_argument("--stereo", action="store_true",
@@ -1700,7 +2116,16 @@ def main():
         baseline_override=args.baseline_override,
         tracking_smoothing=args.tracking_smoothing,
         max_yaw_step=args.max_yaw_step,
-        max_pitch_step=args.max_pitch_step
+        max_pitch_step=args.max_pitch_step,
+        tracking_control_fps=args.tracking_control_fps,
+        belief_update_alpha=args.belief_update_alpha,
+        belief_miss_decay=args.belief_miss_decay,
+        belief_min_confidence=args.belief_min_confidence,
+        belief_max_age=args.belief_max_age,
+        belief_deadband_raw=args.belief_deadband_raw,
+        belief_min_step_raw=args.belief_min_step_raw,
+        pitch_tracking_scale=args.pitch_tracking_scale,
+        belief_reseed_distance_raw=args.belief_reseed_distance_raw
     )
     control_api.set_tracker(tracker)
 
@@ -1724,7 +2149,9 @@ def main():
         print(f"Confidence threshold: {args.confidence}")
         print(f"Inference image size: {args.imgsz}px")
         print(f"Inference FPS target: {tracker.inference_fps:g}")
-        print(f"Tracking smoothing: alpha={tracker.tracking_smoothing:g}, max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}")
+        print(f"Tracking control FPS target: {tracker.tracking_control_fps:g}")
+        print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw")
+        print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}")
     calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
     if tracker.calibration_enabled:
         calib_type = "STEREO" if tracker.stereo_calibration_enabled else "SINGLE"

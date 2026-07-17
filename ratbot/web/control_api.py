@@ -150,6 +150,8 @@ class TrackerControlApi:
                 yaw = request.get("yaw")
                 pitch = request.get("pitch")
 
+                tracker.clear_target_belief()
+
                 if yaw is not None:
                     tracker.set_yaw(yaw)
                 if pitch is not None:
@@ -198,6 +200,31 @@ class TrackerControlApi:
                     content={
                         "success": False,
                         "message": f"Error triggering servo: {str(exc)}",
+                    },
+                    status_code=500,
+                )
+
+        @app.post("/clear-belief")
+        async def clear_belief():
+            """Clear autonomous target belief without moving the servos."""
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    content={"success": False, "message": "Tracker not initialized"},
+                    status_code=500,
+                )
+
+            try:
+                tracker.clear_target_belief()
+                return JSONResponse(
+                    content={"success": True, "message": "Target belief cleared"},
+                    status_code=200,
+                )
+            except Exception as exc:
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "message": f"Error clearing target belief: {str(exc)}",
                     },
                     status_code=500,
                 )

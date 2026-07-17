@@ -66,9 +66,9 @@ run_rt200() {
             --camera-id 0 \
             --stereo \
             --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-            --baseline-override 57.5 \
-            --confidence 0.60 \
-            --inference-fps 14 \
+            --baseline-override 51.1 \
+            --confidence 0.70 \
+            --inference-fps 20 \
             "$@"
 
     echo ""

@@ -35,5 +35,8 @@ class TrackerRobot(Protocol):
     def trigger_action_servo(self) -> None:
         """Fire the optional trigger servo."""
 
+    def clear_target_belief(self) -> bool:
+        """Clear any active target belief used by autonomous tracking."""
+
     def move_to_pixel(self, x: NumericPosition, y: NumericPosition) -> Tuple[int, int]:
         """Convert an image-space target into desired yaw and pitch positions."""

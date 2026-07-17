@@ -13,9 +13,9 @@ servos:
   # Pitch motor (vertical tilt)
   pitch:
     motor_id: 5
-    min: 0         # Minimum pitch position (level, raw)
-    max: 500       # Maximum pitch position (~55 degrees down, raw)
-    center: 250    # Start at level position
+    min: 1         # Full up pitch position (raw)
+    max: 500       # Full down pitch position (raw)
+    center: 250    # Approximate middle/start position
 
   # Trigger servo (PWM)
   trigger:
@@ -26,6 +26,11 @@ servos:
 
 # Camera and Tracking Configuration
 tracking:
+  # Stereo depth is unreliable on flat/blank surfaces; reject low-texture sample windows.
+  depth_min_texture_std: 4.0
+  depth_adjust_smoothing_alpha: 0.20
+  depth_adjust_missing_decay: 0.85
+
   # Base crosshair position
   crosshair:
     x_base: 290      # Base X position at yaw center (2200)
@@ -72,16 +77,25 @@ tracking:
   crosshair_size: 20   # Size of crosshair in pixels
 
   # Auto tracking smoothing
-  # smoothing_alpha is the weight of the newest detection center. Lower is smoother but laggier.
-  # max_*_step caps per-inference servo jumps in raw units to reduce jerky motion.
+  # Detections update an angular target belief; a separate control loop moves toward it.
+  # max_*_step caps per-control-tick servo jumps in raw units to reduce jerky motion.
   auto_tracking:
     smoothing_alpha: 0.45
     max_yaw_step: 45
-    max_pitch_step: 28
+    max_pitch_step: 45
+    control_fps: 20
+    belief_update_alpha: 0.75
+    belief_miss_decay: 0.90
+    belief_min_confidence: 0.15
+    belief_max_age: 1.0
+    belief_deadband_raw: 4
+    belief_min_step_raw: 3
+    pitch_tracking_scale: 2.2
+    belief_reseed_distance_raw: 160
 
   # Frame rates
   video_fps: 30        # Video display frame rate
-  inference_fps: 14    # Inference frame rate target
+  inference_fps: 20    # Inference frame rate target
 
 # Camera FOV calibration (used for pixel-to-angle conversion)
 camera:
@@ -93,20 +107,20 @@ camera:
 # PID Controller Gains
 pid:
   yaw:
-    kp: 0.85   # Proportional gain
-    ki: 0.01   # Integral gain
+    kp: 0.70   # Proportional gain
+    ki: 0.00   # Integral gain
     kd: 0.03   # Derivative gain
 
   pitch:
-    kp: 0.85   # Proportional gain
-    ki: 0.01   # Integral gain
+    kp: 0.90   # Proportional gain
+    ki: 0.00   # Integral gain
     kd: 0.03   # Derivative gain
 
   max_integral: 10.0   # Anti-windup limit in degrees
 
 # Detection Configuration
 detection:
-  confidence_threshold: 0.60
+  confidence_threshold: 0.70
   imgsz: 640
   model_path: "runs/yolo11n-2025-10-23/weights/best.engine"
   target_classes:

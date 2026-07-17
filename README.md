@@ -128,7 +128,7 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 57.5 \
+  --baseline-override 51.1 \
   --port /dev/ttyACM0
 
 # With larger inference size (1024px) - slower but more accurate
@@ -137,7 +137,7 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 57.5 \
+  --baseline-override 51.1 \
   --port /dev/ttyACM0 \
   --imgsz 1024 \
   --inference-fps 4
@@ -156,14 +156,17 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 57.5 \
+  --baseline-override 51.1 \
   --port /dev/ttyACM0 \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
-  --confidence 0.60 \
-  --inference-fps 14 \
-  --tracking-smoothing 0.45 \
+  --confidence 0.70 \
+  --inference-fps 20 \
+  --tracking-control-fps 20 \
+  --belief-update-alpha 0.75 \
   --max-yaw-step 45 \
-  --max-pitch-step 28
+  --max-pitch-step 45 \
+  --pitch-tracking-scale 2.2 \
+  --belief-reseed-distance-raw 160
 ```
 
 #### Stereo Depth + Laser Tracking
@@ -177,7 +180,7 @@ uv run --extra jetson python rt_200.py \
   --disable-detection \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 57.5 \
+  --baseline-override 51.1 \
   --port /dev/ttyACM0
 ```
 
@@ -193,13 +196,13 @@ uv run --extra jetson python rt_200.py \
   --no-connect \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 57.5
+  --baseline-override 51.1
 
 # Simple video-only CSI stream, no servos, no detection
 uv run python rt_200.py --video-only
 ```
 
-The measured physical distance between stereo lens centers is `57.5mm`; pass it with `--baseline-override 57.5` so depth scale uses the real baseline instead of the solved calibration baseline.
+The measured physical distance between stereo lens centers is `57.5mm`. The current live depth scale uses an empirical effective baseline override of `51.1mm`, which matched a tape-measured `1.6m` target after the calibrated baseline overestimated distance.
 
 `config.yaml` contains two crosshair alignment systems:
 
@@ -224,13 +227,20 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 - `--inference-fps` is a scheduling target, not guaranteed throughput.
 - The tracker logs `Inference actual FPS` every few seconds. In live 640px stereo tracking tests, the current Python/Ultralytics path measured about `1.3-1.5` actual FPS despite a 14 FPS target.
 - The Jetson TensorRT engine at `runs/yolo11n-2025-10-23/weights/best.engine` is the preferred live path. The engine was exported from the 10-23 model for FP16 inference; Ultralytics does not accept `quantize=16` for this export, so use `half=True` when regenerating it.
-- Keep `--inference-fps 14` as an upper cap for now. If the tracker cannot hold that rate with depth and servo control enabled, reduce depth frequency or the inference target before increasing image size.
+- The first TensorRT live tracker pass held about `13.9` actual FPS against a 14 FPS cap after warmup. The current tuning pass raises the cap to `20` FPS; if the tracker cannot hold that rate with depth and servo control enabled, reduce depth frequency or the inference target before increasing image size.
 - `imgsz=1024` is not recommended for live tracking until the 640px path is faster.
 
 **Tracking Smoothness:**
-- `--tracking-smoothing` low-pass filters the detected center before servo control. Lower values are smoother but laggier; `0.45` is the current default.
-- `--max-yaw-step` and `--max-pitch-step` cap per-inference servo moves in raw units. Lower values reduce jerk but slow convergence.
-- The current PID gains are intentionally more aggressive than the original values; smoothing and step caps keep that from snapping too hard between detections.
+- Vision detections update an angular target belief in turret coordinates. The servo controller runs separately and moves toward that belief, so motion can continue smoothly between missed detections.
+- `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current test value: `0.75`. Stale/weak beliefs reset directly to the first new observation so reacquisition does not ease in from an old target.
+- `--belief-reseed-distance-raw` resets the belief immediately when a new observation lands far from the current belief. Current test value: `160` raw units.
+- `--tracking-control-fps` controls how often the servo controller reads belief and commands the robot.
+- `--max-yaw-step` and `--max-pitch-step` cap per-control-tick servo moves in raw units. Lower values reduce jerk but slow convergence.
+- `--pitch-tracking-scale` multiplies vertical image error before converting it into pitch raw units. The RT-200 pitch servo uses `1` as full up and `500` as full down; the current test value `2.2` gives below-crosshair detections more downward authority.
+- `--belief-miss-decay`, `--belief-min-confidence`, and `--belief-max-age` decide how long the robot keeps moving toward a target when detections disappear.
+- The web UI has a `Clear Belief` button, backed by the robot control API, that clears autonomous target belief and PID state without recentering the servos or clearing detection history.
+- `tracking.depth_min_texture_std` rejects stereo depth samples on blank/low-texture regions instead of showing unstable but plausible-looking distances.
+- `tracking.depth_adjust_smoothing_alpha` and `tracking.depth_adjust_missing_decay` smooth the depth-based visual crosshair Y offset so the overlay does not jump on noisy stereo samples.
 
 **Model Notes:**
 - `runs/yolo11n-2025-10-23/weights/best.engine` is the current preferred live tracking model on the Jetson.
@@ -285,7 +295,8 @@ Left RMS: 0.065px
 Right RMS: 0.046px
 Stereo RMS: 1.486px
 Solved baseline: 42.61mm
-Measured baseline override: 57.5mm
+Physical lens spacing: 57.5mm
+Current effective baseline override: 51.1mm
 ```
 
 Stereo RMS is usable for testing but still high; a rigid printed target and more varied poses should improve it.
@@ -413,7 +424,7 @@ python tools/vision/inference/inference.py --imgsz 640   # Default
 python tools/vision/inference/inference.py --imgsz 1024  # Larger inference size
 
 # Real-time tracking
-python rt_200.py --imgsz 640 --inference-fps 14   # Current real-time tracking target
+python rt_200.py --imgsz 640 --inference-fps 20   # Current real-time tracking target
 python rt_200.py --imgsz 1024  # Higher accuracy, ~2-4 FPS on Jetson
 ```
 
@@ -466,11 +477,11 @@ uv run python rt_200.py \
   --use-csi \
   --stereo \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 57.5 \
+  --baseline-override 51.1 \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
-  --confidence 0.60 \
+  --confidence 0.70 \
   --imgsz 640 \
-  --inference-fps 14
+  --inference-fps 20
 
 # Access web interface at http://<jetson-ip>:8000
 ```
@@ -485,7 +496,7 @@ uv run python rt_200.py \
 | 800px | Lower | Better | Offline testing |
 | 1024px | Much lower | Best | Offline/high-accuracy testing |
 
-**Recommendation:** Use 640px at `--inference-fps 14` for now, and optimize the inference pipeline before raising image size.
+**Recommendation:** Use 640px at `--inference-fps 20` with the TensorRT engine, and optimize the depth/control loop before raising image size.
 
 ## Configuration Files
 

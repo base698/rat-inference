@@ -126,6 +126,12 @@
         button.trigger:hover {
             background-color: #e68900;
         }
+        button.belief {
+            background-color: #6c757d;
+        }
+        button.belief:hover {
+            background-color: #5a6268;
+        }
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
@@ -200,7 +206,7 @@
             YAW_MIN: 1600,
             YAW_MAX: 3100,
             YAW_CENTER: 2200,
-            PITCH_MIN: 0,
+            PITCH_MIN: 1,
             PITCH_MAX: 500,
             PITCH_CENTER: 250,
             TARGET_CROSSHAIR_X: 291,
@@ -338,6 +344,39 @@
             } finally {
                 setTimeout(() => {
                     button.disabled = !enableTrigger;
+                    status.style.display = 'none';
+                }, 1200);
+            }
+        }
+
+        async function clearBelief() {
+            const button = document.getElementById('clearBeliefButton');
+            const status = document.getElementById('beliefStatus');
+
+            button.disabled = true;
+            status.className = 'servo-status info';
+            status.innerHTML = 'Clearing target belief...';
+            status.style.display = 'block';
+
+            try {
+                const response = await fetch('/clear-belief', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    status.className = 'servo-status success';
+                    status.innerHTML = result.message;
+                } else {
+                    status.className = 'servo-status error';
+                    status.innerHTML = result.message;
+                }
+            } catch (error) {
+                status.className = 'servo-status error';
+                status.innerHTML = 'Error: ' + error.message;
+            } finally {
+                setTimeout(() => {
+                    button.disabled = false;
                     status.style.display = 'none';
                 }, 1200);
             }
@@ -484,6 +523,11 @@
                     event.preventDefault();
                     await triggerServo();
                     break;
+                case 'b':
+                case 'B':
+                    event.preventDefault();
+                    await clearBelief();
+                    break;
             }
         });
 
@@ -587,7 +631,7 @@
                     <div class="control-group">
                         <label for="pitchSlider">Pitch (U/D):</label>
                         <input type="range" id="pitchSlider"
-                               min="0"
+                               min="1"
                                max="500"
                                value="250"
                                oninput="updateSlider(null, this.value)">
@@ -596,9 +640,11 @@
 
                     <div class="button-group">
                         <button class="center" onclick="centerServos()">Center Servos</button>
+                        <button id="clearBeliefButton" class="belief" onclick="clearBelief()">Clear Belief</button>
                         <button id="triggerButton" class="trigger" onclick="triggerServo()" disabled>
                             Trigger Action
                         </button>
+                        <div id="beliefStatus" class="servo-status" style="display: none;"></div>
                         <div id="triggerStatus" class="servo-status" style="display: none;"></div>
                     </div>
                 </div>
@@ -609,6 +655,7 @@
                         <div><span class="key">←</span> / <span class="key">→</span> - Yaw left/right</div>
                         <div><span class="key">↑</span> / <span class="key">↓</span> - Pitch up/down</div>
                         <div><span class="key">C</span> - Center both servos</div>
+                        <div><span class="key">B</span> - Clear target belief</div>
                         <div><span class="key">T</span> - Trigger action servo</div>
                         <div><span class="key">Click canvas</span> - Move tracker to position</div>
                     </div>
