@@ -234,13 +234,21 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 - Vision detections update an angular target belief in turret coordinates. The servo controller runs separately and moves toward that belief, so motion can continue smoothly between missed detections.
 - `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current test value: `0.75`. Stale/weak beliefs reset directly to the first new observation so reacquisition does not ease in from an old target.
 - `--belief-reseed-distance-raw` resets the belief immediately when a new observation lands far from the current belief. Current test value: `160` raw units.
+- `--belief-velocity-alpha`, `--belief-velocity-decay`, `--belief-max-velocity-raw-per-s`, and `--belief-max-prediction-age` add a bounded target-velocity estimate to the belief. This lets the controller continue briefly toward a target that was moving when detections drop at the frame edge. Current test values: `0.45`, `0.96`, `600 raw/s`, `0.45s`.
 - `--tracking-control-fps` controls how often the servo controller reads belief and commands the robot.
 - `--max-yaw-step` and `--max-pitch-step` cap per-control-tick servo moves in raw units. Lower values reduce jerk but slow convergence.
 - `--pitch-tracking-scale` multiplies vertical image error before converting it into pitch raw units. The RT-200 pitch servo uses `1` as full up and `500` as full down; the current test value `2.2` gives below-crosshair detections more downward authority.
 - `--belief-miss-decay`, `--belief-min-confidence`, and `--belief-max-age` decide how long the robot keeps moving toward a target when detections disappear.
 - The web UI has a `Clear Belief` button, backed by the robot control API, that clears autonomous target belief and PID state without recentering the servos or clearing detection history.
-- `tracking.depth_min_texture_std` rejects stereo depth samples on blank/low-texture regions instead of showing unstable but plausible-looking distances.
+- The web UI syncs the yaw/pitch sliders from live motor readback during status polling, unless you are actively dragging a slider or a manual position write is in flight.
+- `tracking.depth_min_texture_std` rejects stereo depth samples on blank/low-texture regions instead of showing unstable but plausible-looking distances. Current test value: `2.5`; lower is more permissive.
 - `tracking.depth_adjust_smoothing_alpha` and `tracking.depth_adjust_missing_decay` smooth the depth-based visual crosshair Y offset so the overlay does not jump on noisy stereo samples.
+
+**Pitch Homing Offset:**
+- Feetech protocol 0 exposes `Homing_Offset`; the library notes `Present_Position = Actual_Position - Homing_Offset`.
+- Use `./run.sh pitch-offset` to read the current pitch offset and limits.
+- Use `./run.sh pitch-offset --delta -100` for a dry run that shows how a 100 raw-unit shift would change the same physical position.
+- Add `--apply` only when you intentionally want to write persistent motor calibration.
 
 **Model Notes:**
 - `runs/yolo11n-2025-10-23/weights/best.engine` is the current preferred live tracking model on the Jetson.

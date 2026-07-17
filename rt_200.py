@@ -273,17 +273,33 @@ class AngularTargetBelief:
     """Thread-safe angular target belief updated by vision observations."""
 
     def __init__(self, update_alpha=0.45, miss_decay=0.94,
-                 min_confidence=0.15, max_age=1.5, reseed_distance_raw=160):
+                 min_confidence=0.15, max_age=1.5, reseed_distance_raw=160,
+                 velocity_alpha=0.45, velocity_decay=0.96,
+                 max_velocity_raw_per_s=600, max_prediction_age=0.45):
         self.update_alpha = max(0.0, min(1.0, float(update_alpha)))
         self.miss_decay = max(0.0, min(1.0, float(miss_decay)))
         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
         self.max_age = max(0.0, float(max_age))
         self.reseed_distance_raw = max(0.0, float(reseed_distance_raw))
+        self.velocity_alpha = max(0.0, min(1.0, float(velocity_alpha)))
+        self.velocity_decay = max(0.0, min(1.0, float(velocity_decay)))
+        self.max_velocity_raw_per_s = max(0.0, float(max_velocity_raw_per_s))
+        self.max_prediction_age = max(0.0, float(max_prediction_age))
         self.lock = threading.Lock()
         self.yaw = None
         self.pitch = None
+        self.yaw_velocity = 0.0
+        self.pitch_velocity = 0.0
         self.confidence = 0.0
         self.last_update = 0.0
+
+    def _clamp_velocity(self, velocity):
+        if self.max_velocity_raw_per_s <= 0:
+            return 0.0
+        return max(
+            -self.max_velocity_raw_per_s,
+            min(self.max_velocity_raw_per_s, float(velocity)),
+        )
 
     def update(self, yaw, pitch, confidence):
         now = time.time()
@@ -311,9 +327,24 @@ class AngularTargetBelief:
             if reseed_reason:
                 self.yaw = float(yaw)
                 self.pitch = float(pitch)
+                self.yaw_velocity = 0.0
+                self.pitch_velocity = 0.0
             else:
+                previous_yaw = self.yaw
+                previous_pitch = self.pitch
+                dt = max(0.001, age)
                 self.yaw += self.update_alpha * (float(yaw) - self.yaw)
                 self.pitch += self.update_alpha * (float(pitch) - self.pitch)
+                observed_yaw_velocity = (self.yaw - previous_yaw) / dt
+                observed_pitch_velocity = (self.pitch - previous_pitch) / dt
+                self.yaw_velocity += self.velocity_alpha * (
+                    observed_yaw_velocity - self.yaw_velocity
+                )
+                self.pitch_velocity += self.velocity_alpha * (
+                    observed_pitch_velocity - self.pitch_velocity
+                )
+                self.yaw_velocity = self._clamp_velocity(self.yaw_velocity)
+                self.pitch_velocity = self._clamp_velocity(self.pitch_velocity)
 
             self.confidence = min(1.0, max(confidence, self.confidence * 0.85 + confidence * 0.35))
             self.last_update = now
@@ -326,6 +357,8 @@ class AngularTargetBelief:
         with self.lock:
             self.yaw = None
             self.pitch = None
+            self.yaw_velocity = 0.0
+            self.pitch_velocity = 0.0
             self.confidence = 0.0
             self.last_update = 0.0
             return self.snapshot_locked(time.time())
@@ -336,16 +369,32 @@ class AngularTargetBelief:
                 return
 
             self.confidence *= self.miss_decay
+            self.yaw_velocity *= self.velocity_decay
+            self.pitch_velocity *= self.velocity_decay
             if self.confidence < 0.01:
                 self.confidence = 0.0
+                self.yaw_velocity = 0.0
+                self.pitch_velocity = 0.0
 
-    def snapshot_locked(self, now=None):
+    def snapshot_locked(self, now=None, predict=False):
         if now is None:
             now = time.time()
         age = now - self.last_update if self.last_update else float("inf")
+        yaw = self.yaw
+        pitch = self.pitch
+        prediction_dt = 0.0
+        if predict and yaw is not None and pitch is not None and age != float("inf"):
+            prediction_dt = min(age, self.max_prediction_age)
+            yaw += self.yaw_velocity * prediction_dt
+            pitch += self.pitch_velocity * prediction_dt
         return {
-            "yaw": self.yaw,
-            "pitch": self.pitch,
+            "yaw": yaw,
+            "pitch": pitch,
+            "base_yaw": self.yaw,
+            "base_pitch": self.pitch,
+            "yaw_velocity": self.yaw_velocity,
+            "pitch_velocity": self.pitch_velocity,
+            "prediction_dt": prediction_dt,
             "confidence": self.confidence,
             "age": age,
         }
@@ -355,7 +404,7 @@ class AngularTargetBelief:
             if self.yaw is None or self.pitch is None:
                 return None
 
-            snapshot = self.snapshot_locked()
+            snapshot = self.snapshot_locked(predict=True)
             if (
                 snapshot["confidence"] < self.min_confidence
                 or (self.max_age > 0 and snapshot["age"] > self.max_age)
@@ -465,6 +514,7 @@ class AngularBeliefController:
         print(
             "   Belief control: "
             f"belief=({belief['yaw']:.1f}, {belief['pitch']:.1f}, conf={belief['confidence']:.2f}, age={belief['age']:.2f}s), "
+            f"vel=({belief['yaw_velocity']:.0f}, {belief['pitch_velocity']:.0f}) raw/s, pred={belief['prediction_dt']:.2f}s, "
             f"error_raw=({yaw_error_raw:.1f}, {pitch_error_raw:.1f}), "
             f"move=({self.robot.current_yaw}->{desired_yaw}, {self.robot.current_pitch}->{desired_pitch})"
         )
@@ -504,7 +554,9 @@ class CameraTracker:
                  belief_miss_decay=0.94, belief_min_confidence=0.15,
                  belief_max_age=1.5, belief_deadband_raw=4,
                  belief_min_step_raw=3, pitch_tracking_scale=1.0,
-                 belief_reseed_distance_raw=160):
+                 belief_reseed_distance_raw=160, belief_velocity_alpha=0.45,
+                 belief_velocity_decay=0.96, belief_max_velocity_raw_per_s=600,
+                 belief_max_prediction_age=0.45):
         """
         Initialize the camera tracker
 
@@ -537,6 +589,10 @@ class CameraTracker:
             belief_min_step_raw: Minimum raw servo-unit correction while outside deadband
             pitch_tracking_scale: Multiplier for vertical image error to pitch raw observation
             belief_reseed_distance_raw: Observation jump that starts a fresh belief
+            belief_velocity_alpha: Smoothing alpha for angular belief velocity
+            belief_velocity_decay: Velocity decay applied on inference ticks without detections
+            belief_max_velocity_raw_per_s: Maximum predicted target speed in raw units/sec
+            belief_max_prediction_age: Maximum seconds to extrapolate after the latest detection
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -571,6 +627,10 @@ class CameraTracker:
         self.belief_min_step_raw = max(0, int(belief_min_step_raw))
         self.pitch_tracking_scale = max(0.1, float(pitch_tracking_scale))
         self.belief_reseed_distance_raw = max(0.0, float(belief_reseed_distance_raw))
+        self.belief_velocity_alpha = max(0.0, min(1.0, float(belief_velocity_alpha)))
+        self.belief_velocity_decay = max(0.0, min(1.0, float(belief_velocity_decay)))
+        self.belief_max_velocity_raw_per_s = max(0.0, float(belief_max_velocity_raw_per_s))
+        self.belief_max_prediction_age = max(0.0, float(belief_max_prediction_age))
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
@@ -674,7 +734,11 @@ class CameraTracker:
             miss_decay=belief_miss_decay,
             min_confidence=belief_min_confidence,
             max_age=belief_max_age,
-            reseed_distance_raw=belief_reseed_distance_raw
+            reseed_distance_raw=belief_reseed_distance_raw,
+            velocity_alpha=belief_velocity_alpha,
+            velocity_decay=belief_velocity_decay,
+            max_velocity_raw_per_s=belief_max_velocity_raw_per_s,
+            max_prediction_age=belief_max_prediction_age
         )
         self.tracking_controller = AngularBeliefController(
             robot=self,
@@ -1555,6 +1619,7 @@ class CameraTracker:
             f"obs=({observation['yaw']}, {observation['pitch']}), "
             f"belief=({belief['yaw']:.1f}, {belief['pitch']:.1f}), "
             f"conf={belief['confidence']:.2f}, "
+            f"vel=({belief['yaw_velocity']:.0f}, {belief['pitch_velocity']:.0f}) raw/s, "
             f"pixel_error=({observation['pixel_error_x']:.1f}, {observation['pixel_error_y']:.1f})"
             f"{' reseed=' + belief['reseed_reason'] if belief.get('reseeded') else ''}"
         )
@@ -2054,6 +2119,14 @@ def main():
                        help="Multiplier for vertical image error to pitch raw observation; higher uses more down/up pitch travel (default: 1.0)")
     parser.add_argument("--belief-reseed-distance-raw", type=float, default=float(auto_tracking_config.get("belief_reseed_distance_raw", 160)),
                        help="Raw-unit observation jump that starts a fresh angular belief instead of smoothing (default: 160)")
+    parser.add_argument("--belief-velocity-alpha", type=float, default=float(auto_tracking_config.get("belief_velocity_alpha", 0.45)),
+                       help="Angular belief velocity smoothing alpha from detections (default: 0.45)")
+    parser.add_argument("--belief-velocity-decay", type=float, default=float(auto_tracking_config.get("belief_velocity_decay", 0.96)),
+                       help="Angular belief velocity decay per inference tick without detection (default: 0.96)")
+    parser.add_argument("--belief-max-velocity-raw-per-s", type=float, default=float(auto_tracking_config.get("belief_max_velocity_raw_per_s", 600)),
+                       help="Maximum angular belief target speed in raw servo units/sec (default: 600)")
+    parser.add_argument("--belief-max-prediction-age", type=float, default=float(auto_tracking_config.get("belief_max_prediction_age", 0.45)),
+                       help="Maximum seconds to extrapolate target belief after the latest detection (default: 0.45)")
     parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
                        help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
     parser.add_argument("--stereo", action="store_true",
@@ -2125,7 +2198,11 @@ def main():
         belief_deadband_raw=args.belief_deadband_raw,
         belief_min_step_raw=args.belief_min_step_raw,
         pitch_tracking_scale=args.pitch_tracking_scale,
-        belief_reseed_distance_raw=args.belief_reseed_distance_raw
+        belief_reseed_distance_raw=args.belief_reseed_distance_raw,
+        belief_velocity_alpha=args.belief_velocity_alpha,
+        belief_velocity_decay=args.belief_velocity_decay,
+        belief_max_velocity_raw_per_s=args.belief_max_velocity_raw_per_s,
+        belief_max_prediction_age=args.belief_max_prediction_age
     )
     control_api.set_tracker(tracker)
 
@@ -2151,6 +2228,7 @@ def main():
         print(f"Inference FPS target: {tracker.inference_fps:g}")
         print(f"Tracking control FPS target: {tracker.tracking_control_fps:g}")
         print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw")
+        print(f"Belief velocity: alpha={tracker.belief_velocity_alpha:g}, decay={tracker.belief_velocity_decay:g}, max={tracker.belief_max_velocity_raw_per_s:g} raw/s, predict={tracker.belief_max_prediction_age:g}s")
         print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}")
     calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
     if tracker.calibration_enabled:

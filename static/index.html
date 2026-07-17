@@ -316,6 +316,33 @@
             updateSlider(CONFIG.YAW_CENTER, CONFIG.PITCH_CENTER);
         }
 
+        function syncSliderFromStatus(yaw, pitch) {
+            if (positionFetching) {
+                return;
+            }
+
+            const yawSlider = document.getElementById('yawSlider');
+            const pitchSlider = document.getElementById('pitchSlider');
+            const active = document.activeElement;
+            if (active === yawSlider || active === pitchSlider) {
+                return;
+            }
+
+            if (typeof yaw === 'number') {
+                yawValue = yaw;
+                desiredYaw = yaw;
+                yawSlider.value = yaw;
+                document.getElementById('yawValue').textContent = yaw;
+            }
+
+            if (typeof pitch === 'number') {
+                pitchValue = pitch;
+                desiredPitch = pitch;
+                pitchSlider.value = pitch;
+                document.getElementById('pitchValue').textContent = pitch;
+            }
+        }
+
         async function triggerServo() {
             const button = document.getElementById('triggerButton');
             const status = document.getElementById('triggerStatus');
@@ -431,6 +458,9 @@
                     'Camera: ' + (status.camera_active ? 'Active' : 'Inactive');
                 document.getElementById('detectionCount').textContent =
                     'Total Detections: ' + (status.detection_count || 0);
+                if (typeof status.yaw_position === 'number' && typeof status.pitch_position === 'number') {
+                    syncSliderFromStatus(status.yaw_position, status.pitch_position);
+                }
             } catch (error) {
                 console.error('Error getting status:', error);
             } finally {

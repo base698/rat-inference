@@ -7,7 +7,7 @@ IMAGE_NAME="rat-inference:latest"
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 [build|rt200|inference|shell|servo-test|trigger-test|pitch-test|motor-scan]"
+    echo "Usage: $0 [build|rt200|inference|shell|servo-test|trigger-test|pitch-test|pitch-offset|motor-scan]"
     echo ""
     echo "Commands:"
     echo "  build          - Build the Docker image"
@@ -16,6 +16,7 @@ usage() {
     echo "  servo-test     - Test servo using hardware PWM (sysfs)"
     echo "  trigger-test   - Interactive trigger servo position test (type numbers, 'q' to quit)"
     echo "  pitch-test     - Test pitch motor (read/write position)"
+    echo "  pitch-offset   - Read or adjust pitch motor Homing_Offset (dry-run unless --apply)"
     echo "  motor-scan     - Scan for Feetech motors and change IDs"
     echo "  shell          - Open a bash shell in the container"
     echo ""
@@ -28,6 +29,8 @@ usage() {
     echo "  $0 trigger-test           # Interactive trigger position test"
     echo "  $0 pitch-test             # Read current pitch position"
     echo "  $0 pitch-test 300         # Write pitch position to 300"
+    echo "  $0 pitch-offset --delta -100       # Dry-run pitch homing offset shift"
+    echo "  $0 pitch-offset --delta -100 --apply  # Persist pitch homing offset shift"
     echo "  $0 motor-scan             # Scan for motors on IDs 1-20"
     echo "  $0 motor-scan --set-id 1 5  # Change motor from ID 1 to ID 5"
     exit 1
@@ -144,6 +147,18 @@ test_pitch() {
         python3 tools/hardware/pitch_test.py "$@"
 }
 
+# Read or adjust pitch homing offset (Feetech)
+pitch_offset() {
+    echo "Reading/adjusting pitch motor Homing_Offset..."
+    docker run -it --rm \
+        --privileged \
+        --ipc=host \
+        --runtime=nvidia \
+        --device=/dev/ttyACM0:/dev/ttyACM0 \
+        $IMAGE_NAME \
+        python3 tools/hardware/pitch_homing_offset.py "$@"
+}
+
 # Test trigger servo positions (interactive)
 test_trigger() {
     echo "Testing trigger servo positions (interactive)..."
@@ -204,6 +219,10 @@ case "${1:-rt200}" in
     pitch-test)
         shift
         test_pitch "$@"
+        ;;
+    pitch-offset)
+        shift
+        pitch_offset "$@"
         ;;
     trigger-test)
         shift

@@ -27,7 +27,7 @@ servos:
 # Camera and Tracking Configuration
 tracking:
   # Stereo depth is unreliable on flat/blank surfaces; reject low-texture sample windows.
-  depth_min_texture_std: 4.0
+  depth_min_texture_std: 2.5
   depth_adjust_smoothing_alpha: 0.20
   depth_adjust_missing_decay: 0.85
 
@@ -92,6 +92,10 @@ tracking:
     belief_min_step_raw: 3
     pitch_tracking_scale: 2.2
     belief_reseed_distance_raw: 160
+    belief_velocity_alpha: 0.45
+    belief_velocity_decay: 0.96
+    belief_max_velocity_raw_per_s: 600
+    belief_max_prediction_age: 0.45
 
   # Frame rates
   video_fps: 30        # Video display frame rate
