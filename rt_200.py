@@ -275,16 +275,34 @@ class AngularTargetBelief:
     def __init__(self, update_alpha=0.45, miss_decay=0.94,
                  min_confidence=0.15, max_age=1.5, reseed_distance_raw=160,
                  velocity_alpha=0.45, velocity_decay=0.96,
-                 max_velocity_raw_per_s=600, max_prediction_age=0.45):
+                 max_velocity_raw_per_s=600, max_prediction_age=0.45,
+                 reseed_confirmations=2, reseed_match_distance_raw=120,
+                 reseed_max_interval=0.8, pitch_update_alpha=None,
+                 pitch_velocity_alpha=None, max_pitch_velocity_raw_per_s=None):
         self.update_alpha = max(0.0, min(1.0, float(update_alpha)))
+        self.pitch_update_alpha = (
+            self.update_alpha if pitch_update_alpha is None
+            else max(0.0, min(1.0, float(pitch_update_alpha)))
+        )
         self.miss_decay = max(0.0, min(1.0, float(miss_decay)))
         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
         self.max_age = max(0.0, float(max_age))
         self.reseed_distance_raw = max(0.0, float(reseed_distance_raw))
         self.velocity_alpha = max(0.0, min(1.0, float(velocity_alpha)))
+        self.pitch_velocity_alpha = (
+            self.velocity_alpha if pitch_velocity_alpha is None
+            else max(0.0, min(1.0, float(pitch_velocity_alpha)))
+        )
         self.velocity_decay = max(0.0, min(1.0, float(velocity_decay)))
         self.max_velocity_raw_per_s = max(0.0, float(max_velocity_raw_per_s))
+        self.max_pitch_velocity_raw_per_s = (
+            self.max_velocity_raw_per_s if max_pitch_velocity_raw_per_s is None
+            else max(0.0, float(max_pitch_velocity_raw_per_s))
+        )
         self.max_prediction_age = max(0.0, float(max_prediction_age))
+        self.reseed_confirmations = max(1, int(reseed_confirmations))
+        self.reseed_match_distance_raw = max(0.0, float(reseed_match_distance_raw))
+        self.reseed_max_interval = max(0.0, float(reseed_max_interval))
         self.lock = threading.Lock()
         self.yaw = None
         self.pitch = None
@@ -292,65 +310,140 @@ class AngularTargetBelief:
         self.pitch_velocity = 0.0
         self.confidence = 0.0
         self.last_update = 0.0
+        self.pending_reseed_yaw = None
+        self.pending_reseed_pitch = None
+        self.pending_reseed_time = 0.0
+        self.pending_reseed_count = 0
 
-    def _clamp_velocity(self, velocity):
-        if self.max_velocity_raw_per_s <= 0:
+    def _clamp_velocity(self, velocity, limit=None):
+        if limit is None:
+            limit = self.max_velocity_raw_per_s
+        if limit <= 0:
             return 0.0
         return max(
-            -self.max_velocity_raw_per_s,
-            min(self.max_velocity_raw_per_s, float(velocity)),
+            -limit,
+            min(limit, float(velocity)),
         )
 
     def update(self, yaw, pitch, confidence):
         now = time.time()
+        yaw = float(yaw)
+        pitch = float(pitch)
         confidence = max(0.0, min(1.0, float(confidence)))
 
         with self.lock:
             age = now - self.last_update if self.last_update else float("inf")
+            predicted = False
+            if self.yaw is not None and self.pitch is not None and age != float("inf"):
+                prediction_dt = min(age, self.max_prediction_age)
+                if prediction_dt > 0:
+                    self.yaw += self.yaw_velocity * prediction_dt
+                    self.pitch += self.pitch_velocity * prediction_dt
+                    predicted = True
+
             stale = self.max_age > 0 and age > self.max_age
             weak = self.confidence < self.min_confidence
             jump = 0.0
             if self.yaw is not None and self.pitch is not None:
-                jump = max(abs(float(yaw) - self.yaw), abs(float(pitch) - self.pitch))
+                jump = max(abs(yaw - self.yaw), abs(pitch - self.pitch))
             large_jump = self.reseed_distance_raw > 0 and jump > self.reseed_distance_raw
 
             reseed_reason = None
+            ignored_reason = None
             if self.yaw is None or self.pitch is None or self.confidence <= 0:
                 reseed_reason = "empty"
+            elif large_jump:
+                pending_age = now - self.pending_reseed_time if self.pending_reseed_time else float("inf")
+                pending_match = False
+                if self.pending_reseed_yaw is not None and self.pending_reseed_pitch is not None:
+                    pending_distance = max(
+                        abs(yaw - self.pending_reseed_yaw),
+                        abs(pitch - self.pending_reseed_pitch),
+                    )
+                    pending_match = (
+                        pending_age <= self.reseed_max_interval
+                        and pending_distance <= self.reseed_match_distance_raw
+                    )
+
+                if pending_match:
+                    self.pending_reseed_count += 1
+                else:
+                    self.pending_reseed_count = 1
+
+                self.pending_reseed_yaw = yaw
+                self.pending_reseed_pitch = pitch
+                self.pending_reseed_time = now
+
+                if self.pending_reseed_count >= self.reseed_confirmations:
+                    reason_prefix = "stale " if stale else "weak " if weak else ""
+                    reseed_reason = f"{reason_prefix}jump {jump:.0f} confirmed"
+                else:
+                    reason_prefix = "stale " if stale else "weak " if weak else ""
+                    ignored_reason = f"pending {reason_prefix}jump {jump:.0f}"
             elif stale:
                 reseed_reason = "stale"
             elif weak:
                 reseed_reason = "weak"
-            elif large_jump:
-                reseed_reason = f"jump {jump:.0f}"
+
+            if ignored_reason:
+                self.confidence *= self.miss_decay
+                self.yaw_velocity *= self.velocity_decay
+                self.pitch_velocity *= self.velocity_decay
+                if self.confidence < 0.01:
+                    self.confidence = 0.0
+                    self.yaw_velocity = 0.0
+                    self.pitch_velocity = 0.0
+                self.last_update = now
+                snapshot = self.snapshot_locked(now)
+                snapshot["reseeded"] = False
+                snapshot["reseed_reason"] = None
+                snapshot["ignored"] = True
+                snapshot["ignored_reason"] = ignored_reason
+                snapshot["predicted_before_update"] = predicted
+                return snapshot
 
             if reseed_reason:
-                self.yaw = float(yaw)
-                self.pitch = float(pitch)
+                self.yaw = yaw
+                self.pitch = pitch
                 self.yaw_velocity = 0.0
                 self.pitch_velocity = 0.0
             else:
                 previous_yaw = self.yaw
                 previous_pitch = self.pitch
                 dt = max(0.001, age)
-                self.yaw += self.update_alpha * (float(yaw) - self.yaw)
-                self.pitch += self.update_alpha * (float(pitch) - self.pitch)
+                self.yaw += self.update_alpha * (yaw - self.yaw)
+                self.pitch += self.pitch_update_alpha * (pitch - self.pitch)
                 observed_yaw_velocity = (self.yaw - previous_yaw) / dt
                 observed_pitch_velocity = (self.pitch - previous_pitch) / dt
                 self.yaw_velocity += self.velocity_alpha * (
                     observed_yaw_velocity - self.yaw_velocity
                 )
-                self.pitch_velocity += self.velocity_alpha * (
+                self.pitch_velocity += self.pitch_velocity_alpha * (
                     observed_pitch_velocity - self.pitch_velocity
                 )
                 self.yaw_velocity = self._clamp_velocity(self.yaw_velocity)
-                self.pitch_velocity = self._clamp_velocity(self.pitch_velocity)
+                self.pitch_velocity = self._clamp_velocity(
+                    self.pitch_velocity,
+                    self.max_pitch_velocity_raw_per_s,
+                )
+                self.pending_reseed_yaw = None
+                self.pending_reseed_pitch = None
+                self.pending_reseed_time = 0.0
+                self.pending_reseed_count = 0
 
             self.confidence = min(1.0, max(confidence, self.confidence * 0.85 + confidence * 0.35))
             self.last_update = now
+            if reseed_reason:
+                self.pending_reseed_yaw = None
+                self.pending_reseed_pitch = None
+                self.pending_reseed_time = 0.0
+                self.pending_reseed_count = 0
             snapshot = self.snapshot_locked(now)
             snapshot["reseeded"] = reseed_reason is not None
             snapshot["reseed_reason"] = reseed_reason
+            snapshot["ignored"] = False
+            snapshot["ignored_reason"] = None
+            snapshot["predicted_before_update"] = predicted
             return snapshot
 
     def clear(self):
@@ -361,6 +454,10 @@ class AngularTargetBelief:
             self.pitch_velocity = 0.0
             self.confidence = 0.0
             self.last_update = 0.0
+            self.pending_reseed_yaw = None
+            self.pending_reseed_pitch = None
+            self.pending_reseed_time = 0.0
+            self.pending_reseed_count = 0
             return self.snapshot_locked(time.time())
 
     def decay(self):
@@ -556,7 +653,11 @@ class CameraTracker:
                  belief_min_step_raw=3, pitch_tracking_scale=1.0,
                  belief_reseed_distance_raw=160, belief_velocity_alpha=0.45,
                  belief_velocity_decay=0.96, belief_max_velocity_raw_per_s=600,
-                 belief_max_prediction_age=0.45):
+                 belief_max_prediction_age=0.45, belief_reseed_confirmations=2,
+                 belief_reseed_match_distance_raw=120,
+                 belief_reseed_max_interval=0.8, belief_pitch_update_alpha=None,
+                 belief_pitch_velocity_alpha=None,
+                 belief_max_pitch_velocity_raw_per_s=None):
         """
         Initialize the camera tracker
 
@@ -593,6 +694,12 @@ class CameraTracker:
             belief_velocity_decay: Velocity decay applied on inference ticks without detections
             belief_max_velocity_raw_per_s: Maximum predicted target speed in raw units/sec
             belief_max_prediction_age: Maximum seconds to extrapolate after the latest detection
+            belief_reseed_confirmations: Matching far-jump detections required before reseed
+            belief_reseed_match_distance_raw: Raw-unit distance for matching pending reseeds
+            belief_reseed_max_interval: Maximum seconds between matching pending reseeds
+            belief_pitch_update_alpha: Optional pitch-only belief update alpha
+            belief_pitch_velocity_alpha: Optional pitch-only velocity update alpha
+            belief_max_pitch_velocity_raw_per_s: Optional pitch-only velocity cap
         """
         self.port = port
         self.enable_servos = enable_servos
@@ -631,6 +738,21 @@ class CameraTracker:
         self.belief_velocity_decay = max(0.0, min(1.0, float(belief_velocity_decay)))
         self.belief_max_velocity_raw_per_s = max(0.0, float(belief_max_velocity_raw_per_s))
         self.belief_max_prediction_age = max(0.0, float(belief_max_prediction_age))
+        self.belief_reseed_confirmations = max(1, int(belief_reseed_confirmations))
+        self.belief_reseed_match_distance_raw = max(0.0, float(belief_reseed_match_distance_raw))
+        self.belief_reseed_max_interval = max(0.0, float(belief_reseed_max_interval))
+        self.belief_pitch_update_alpha = (
+            self.belief_update_alpha if belief_pitch_update_alpha is None
+            else max(0.0, min(1.0, float(belief_pitch_update_alpha)))
+        )
+        self.belief_pitch_velocity_alpha = (
+            self.belief_velocity_alpha if belief_pitch_velocity_alpha is None
+            else max(0.0, min(1.0, float(belief_pitch_velocity_alpha)))
+        )
+        self.belief_max_pitch_velocity_raw_per_s = (
+            self.belief_max_velocity_raw_per_s if belief_max_pitch_velocity_raw_per_s is None
+            else max(0.0, float(belief_max_pitch_velocity_raw_per_s))
+        )
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
@@ -675,6 +797,7 @@ class CameraTracker:
         self.stereo_disparity_sign = 1
         tracking_config = CONFIG.get('tracking', {}) if CONFIG else {}
         self.depth_min_texture_std = float(tracking_config.get('depth_min_texture_std', 4.0))
+        self.depth_max_valid_mm = float(tracking_config.get('depth_max_valid_mm', 6000.0))
         self.depth_adjust_smoothing_alpha = max(
             0.0,
             min(1.0, float(tracking_config.get('depth_adjust_smoothing_alpha', 0.20)))
@@ -683,6 +806,9 @@ class CameraTracker:
             0.0,
             min(1.0, float(tracking_config.get('depth_adjust_missing_decay', 0.85)))
         )
+        self.motor_readback_fps = max(0.0, float(tracking_config.get('motor_readback_fps', 10)))
+        self.motor_readback_interval = 1.0 / self.motor_readback_fps if self.motor_readback_fps > 0 else 0.0
+        self.last_motor_readback_time = 0.0
         self.display_depth_adjust_px = 0.0
         self.display_depth_adjust_initialized = False
         self.last_depth_debug = "not computed"
@@ -738,7 +864,13 @@ class CameraTracker:
             velocity_alpha=belief_velocity_alpha,
             velocity_decay=belief_velocity_decay,
             max_velocity_raw_per_s=belief_max_velocity_raw_per_s,
-            max_prediction_age=belief_max_prediction_age
+            max_prediction_age=belief_max_prediction_age,
+            reseed_confirmations=belief_reseed_confirmations,
+            reseed_match_distance_raw=belief_reseed_match_distance_raw,
+            reseed_max_interval=belief_reseed_max_interval,
+            pitch_update_alpha=self.belief_pitch_update_alpha,
+            pitch_velocity_alpha=self.belief_pitch_velocity_alpha,
+            max_pitch_velocity_raw_per_s=self.belief_max_pitch_velocity_raw_per_s,
         )
         self.tracking_controller = AngularBeliefController(
             robot=self,
@@ -1090,6 +1222,10 @@ class CameraTracker:
             # focal_length is in pixels, baseline is in mm
             focal_length = self.stereo_focal_length or self.K1[0, 0]
             depth_mm = (focal_length * self.baseline) / d
+            if self.depth_max_valid_mm > 0 and depth_mm > self.depth_max_valid_mm:
+                self.last_depth_debug = f"depth too far {depth_mm / 1000.0:.2f}m"
+                return None
+
             self.last_depth_debug = f"disp {d:.2f}px"
 
             return depth_mm
@@ -1622,6 +1758,7 @@ class CameraTracker:
             f"vel=({belief['yaw_velocity']:.0f}, {belief['pitch_velocity']:.0f}) raw/s, "
             f"pixel_error=({observation['pixel_error_x']:.1f}, {observation['pixel_error_y']:.1f})"
             f"{' reseed=' + belief['reseed_reason'] if belief.get('reseeded') else ''}"
+            f"{' ignored=' + belief['ignored_reason'] if belief.get('ignored') else ''}"
         )
 
     def decay_target_belief(self):
@@ -1792,8 +1929,13 @@ class CameraTracker:
 
         try:
             # Update servo positions for dynamic crosshair (reads actual position from servos)
-            if self.connected and self.motor_bus:
+            readback_due = (
+                self.motor_readback_interval <= 0
+                or time.time() - self.last_motor_readback_time >= self.motor_readback_interval
+            )
+            if self.connected and self.motor_bus and readback_due:
                 try:
+                    self.last_motor_readback_time = time.time()
                     yaw_pos, pitch_pos = self.read_motor_positions()
                     # Only update if we got valid readings
                     if yaw_pos is not None and pitch_pos is not None:
@@ -2105,6 +2247,8 @@ def main():
                        help="Servo control loop FPS for angular target belief tracking (default: 20)")
     parser.add_argument("--belief-update-alpha", type=float, default=float(auto_tracking_config.get("belief_update_alpha", 0.45)),
                        help="Angular belief update alpha from new detections: 0 ignores, 1 jumps to observation (default: 0.45)")
+    parser.add_argument("--belief-pitch-update-alpha", type=float, default=auto_tracking_config.get("belief_pitch_update_alpha", None),
+                       help="Optional pitch-only angular belief update alpha (default: same as --belief-update-alpha)")
     parser.add_argument("--belief-miss-decay", type=float, default=float(auto_tracking_config.get("belief_miss_decay", 0.94)),
                        help="Belief confidence decay per inference tick without detection (default: 0.94)")
     parser.add_argument("--belief-min-confidence", type=float, default=float(auto_tracking_config.get("belief_min_confidence", 0.15)),
@@ -2121,12 +2265,22 @@ def main():
                        help="Raw-unit observation jump that starts a fresh angular belief instead of smoothing (default: 160)")
     parser.add_argument("--belief-velocity-alpha", type=float, default=float(auto_tracking_config.get("belief_velocity_alpha", 0.45)),
                        help="Angular belief velocity smoothing alpha from detections (default: 0.45)")
+    parser.add_argument("--belief-pitch-velocity-alpha", type=float, default=auto_tracking_config.get("belief_pitch_velocity_alpha", None),
+                       help="Optional pitch-only angular belief velocity alpha (default: same as --belief-velocity-alpha)")
     parser.add_argument("--belief-velocity-decay", type=float, default=float(auto_tracking_config.get("belief_velocity_decay", 0.96)),
                        help="Angular belief velocity decay per inference tick without detection (default: 0.96)")
     parser.add_argument("--belief-max-velocity-raw-per-s", type=float, default=float(auto_tracking_config.get("belief_max_velocity_raw_per_s", 600)),
                        help="Maximum angular belief target speed in raw servo units/sec (default: 600)")
+    parser.add_argument("--belief-max-pitch-velocity-raw-per-s", type=float, default=auto_tracking_config.get("belief_max_pitch_velocity_raw_per_s", None),
+                       help="Optional pitch-only angular belief target speed cap (default: same as --belief-max-velocity-raw-per-s)")
     parser.add_argument("--belief-max-prediction-age", type=float, default=float(auto_tracking_config.get("belief_max_prediction_age", 0.45)),
                        help="Maximum seconds to extrapolate target belief after the latest detection (default: 0.45)")
+    parser.add_argument("--belief-reseed-confirmations", type=int, default=int(auto_tracking_config.get("belief_reseed_confirmations", 2)),
+                       help="Matching far-jump detections required before reseeding angular belief (default: 2)")
+    parser.add_argument("--belief-reseed-match-distance-raw", type=float, default=float(auto_tracking_config.get("belief_reseed_match_distance_raw", 120)),
+                       help="Raw-unit distance for matching pending reseed detections (default: 120)")
+    parser.add_argument("--belief-reseed-max-interval", type=float, default=float(auto_tracking_config.get("belief_reseed_max_interval", 0.8)),
+                       help="Maximum seconds between matching pending reseed detections (default: 0.8)")
     parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
                        help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
     parser.add_argument("--stereo", action="store_true",
@@ -2202,7 +2356,13 @@ def main():
         belief_velocity_alpha=args.belief_velocity_alpha,
         belief_velocity_decay=args.belief_velocity_decay,
         belief_max_velocity_raw_per_s=args.belief_max_velocity_raw_per_s,
-        belief_max_prediction_age=args.belief_max_prediction_age
+        belief_max_prediction_age=args.belief_max_prediction_age,
+        belief_reseed_confirmations=args.belief_reseed_confirmations,
+        belief_reseed_match_distance_raw=args.belief_reseed_match_distance_raw,
+        belief_reseed_max_interval=args.belief_reseed_max_interval,
+        belief_pitch_update_alpha=args.belief_pitch_update_alpha,
+        belief_pitch_velocity_alpha=args.belief_pitch_velocity_alpha,
+        belief_max_pitch_velocity_raw_per_s=args.belief_max_pitch_velocity_raw_per_s
     )
     control_api.set_tracker(tracker)
 
@@ -2227,9 +2387,9 @@ def main():
         print(f"Inference image size: {args.imgsz}px")
         print(f"Inference FPS target: {tracker.inference_fps:g}")
         print(f"Tracking control FPS target: {tracker.tracking_control_fps:g}")
-        print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw")
-        print(f"Belief velocity: alpha={tracker.belief_velocity_alpha:g}, decay={tracker.belief_velocity_decay:g}, max={tracker.belief_max_velocity_raw_per_s:g} raw/s, predict={tracker.belief_max_prediction_age:g}s")
-        print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}")
+        print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations}")
+        print(f"Belief velocity: alpha={tracker.belief_velocity_alpha:g}, pitch_alpha={tracker.belief_pitch_velocity_alpha:g}, decay={tracker.belief_velocity_decay:g}, max={tracker.belief_max_velocity_raw_per_s:g}/{tracker.belief_max_pitch_velocity_raw_per_s:g} raw/s, predict={tracker.belief_max_prediction_age:g}s")
+        print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}, motor_readback={tracker.motor_readback_fps:g} FPS")
     calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
     if tracker.calibration_enabled:
         calib_type = "STEREO" if tracker.stereo_calibration_enabled else "SINGLE"

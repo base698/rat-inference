@@ -232,16 +232,20 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 
 **Tracking Smoothness:**
 - Vision detections update an angular target belief in turret coordinates. The servo controller runs separately and moves toward that belief, so motion can continue smoothly between missed detections.
-- `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current test value: `0.75`. Stale/weak beliefs reset directly to the first new observation so reacquisition does not ease in from an old target.
-- `--belief-reseed-distance-raw` resets the belief immediately when a new observation lands far from the current belief. Current test value: `160` raw units.
+- `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current test value: `0.75`. Non-jump stale/weak beliefs reset directly to the first new observation, while far jumps use the confirmation gate below.
+- `--belief-reseed-distance-raw` marks a far-away observation as a possible target jump. The first jump is ignored while the existing belief continues; a second matching jump within `--belief-reseed-max-interval` confirms reacquisition. Current test values: `160` raw units, `2` confirmations, `120` raw-unit match distance, `0.8s` interval.
 - `--belief-velocity-alpha`, `--belief-velocity-decay`, `--belief-max-velocity-raw-per-s`, and `--belief-max-prediction-age` add a bounded target-velocity estimate to the belief. This lets the controller continue briefly toward a target that was moving when detections drop at the frame edge. Current test values: `0.45`, `0.96`, `600 raw/s`, `0.45s`.
+- Pitch is damped separately because vertical detections are noisier: `--belief-pitch-update-alpha` is currently `0.35`, `--belief-pitch-velocity-alpha` is `0.25`, `--belief-max-pitch-velocity-raw-per-s` is `180`, and `--max-pitch-step` is `35`.
 - `--tracking-control-fps` controls how often the servo controller reads belief and commands the robot.
 - `--max-yaw-step` and `--max-pitch-step` cap per-control-tick servo moves in raw units. Lower values reduce jerk but slow convergence.
 - `--pitch-tracking-scale` multiplies vertical image error before converting it into pitch raw units. The RT-200 pitch servo uses `1` as full up and `500` as full down; the current test value `2.2` gives below-crosshair detections more downward authority.
+- Pitch derivative gain is currently `0.00` so the pitch loop follows the belief without derivative kick from servo readback lag.
+- `tracking.video_fps` is currently `30` so inference has fresh camera frames; `tracking.motor_readback_fps` is currently `10` so the video overlay does not poll servo position on every frame.
 - `--belief-miss-decay`, `--belief-min-confidence`, and `--belief-max-age` decide how long the robot keeps moving toward a target when detections disappear.
 - The web UI has a `Clear Belief` button, backed by the robot control API, that clears autonomous target belief and PID state without recentering the servos or clearing detection history.
 - The web UI syncs the yaw/pitch sliders from live motor readback during status polling, unless you are actively dragging a slider or a manual position write is in flight.
 - `tracking.depth_min_texture_std` rejects stereo depth samples on blank/low-texture regions instead of showing unstable but plausible-looking distances. Current test value: `2.5`; lower is more permissive.
+- `tracking.depth_max_valid_mm` rejects far-depth spikes before they can move the depth-compensated crosshair. Current test value: `6000.0`.
 - `tracking.depth_adjust_smoothing_alpha` and `tracking.depth_adjust_missing_decay` smooth the depth-based visual crosshair Y offset so the overlay does not jump on noisy stereo samples.
 
 **Pitch Homing Offset:**
