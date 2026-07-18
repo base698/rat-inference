@@ -7,7 +7,6 @@ Includes Raspberry Pi camera streaming, YOLO inference, and GPIO trigger servo
 
 import os
 import time
-import argparse
 import threading
 import io
 import shutil
@@ -19,6 +18,7 @@ from ratbot.vision.yolo_inference import run_inference as yolo_run_inference, ex
 from ratbot.vision.camera_source import CameraSource
 from ratbot.vision.overlay import OverlayRenderer
 from ratbot.vision.stereo_depth import StereoDepthService
+from ratbot.runtime_config import parse_runtime_config
 from ratbot.robot import (
     AngularBeliefController,
     AngularTargetBelief,
@@ -990,191 +990,36 @@ def run_api_server(host="0.0.0.0", port=8000):
     uvicorn.run(app, host=host, port=port, log_level="error")
 
 def main():
-    detection_config = CONFIG.get('detection', {}) if CONFIG else {}
-    tracking_config = CONFIG.get('tracking', {}) if CONFIG else {}
-    auto_tracking_config = tracking_config.get('auto_tracking', {})
-
-    parser = argparse.ArgumentParser(description="Camera tracker with servo control and rat detection")
-
-    # Servo settings
-    parser.add_argument("--port", "-p", type=str, default="/dev/ttyACM0",
-                       help="Serial port for servo connection")
-    parser.add_argument("--disable-servos", action="store_true",
-                       help="Disable tracking servo control (simulation mode)")
-    parser.add_argument("--no-connect", action="store_true",
-                       help="Skip servo connection attempt (web interface only)")
-
-    # Camera and detection settings
-    parser.add_argument("--video-only", action="store_true",
-                       help="Convenience mode: CSI camera web stream, no servos, no detection")
-    parser.add_argument("--enable-camera", action="store_true",
-                       help="Enable camera")
-    parser.add_argument("--camera-id", type=int, default=0,
-                       help="Camera device ID (default: 0)")
-    parser.add_argument("--use-csi", action="store_true",
-                       help="Use CSI camera with GStreamer pipeline (Jetson)")
-    parser.add_argument("--invert-camera", action="store_true",
-                       help="Invert camera 180 degrees for upside-down mounting")
-    parser.add_argument("--model", "-m", type=str, default=detection_config.get("model_path", "runs/yolo11n-2025-10-24/weights/best.pt"),
-                       help="Path to YOLO model")
-    parser.add_argument("--disable-detection", action="store_true",
-                       help="Disable YOLO detection while keeping the camera stream enabled")
-    parser.add_argument("--confidence", "-c", type=float, default=float(detection_config.get("confidence_threshold", 0.75)),
-                       help="Detection confidence threshold")
-    parser.add_argument("--target-class", action="append", default=None,
-                       help="YOLO class name to track. Repeat or comma-separate values. Default: all model classes")
-    parser.add_argument("--imgsz", type=int, default=int(detection_config.get("imgsz", 640)),
-                       help="Inference image size in pixels (default: 640)")
-    parser.add_argument("--inference-fps", type=float, default=None,
-                       help=f"Target inference loop FPS (default: {INFERENCE_FPS})")
-    parser.add_argument("--tracking-smoothing", type=float, default=float(auto_tracking_config.get("smoothing_alpha", 0.45)),
-                       help="Detection center smoothing alpha for auto tracking: 0 disables, 1 follows raw detections (default: 0.45)")
-    parser.add_argument("--max-yaw-step", type=int, default=int(auto_tracking_config.get("max_yaw_step", 45)),
-                       help="Maximum yaw raw-unit move per inference update for smoother tracking (default: 45)")
-    parser.add_argument("--max-pitch-step", type=int, default=int(auto_tracking_config.get("max_pitch_step", 45)),
-                       help="Maximum pitch raw-unit move per control update for smoother tracking (default: 45)")
-    parser.add_argument("--tracking-control-fps", type=float, default=float(auto_tracking_config.get("control_fps", 20)),
-                       help="Servo control loop FPS for angular target belief tracking (default: 20)")
-    parser.add_argument("--belief-update-alpha", type=float, default=float(auto_tracking_config.get("belief_update_alpha", 0.45)),
-                       help="Angular belief update alpha from new detections: 0 ignores, 1 jumps to observation (default: 0.45)")
-    parser.add_argument("--belief-pitch-update-alpha", type=float, default=auto_tracking_config.get("belief_pitch_update_alpha", None),
-                       help="Optional pitch-only angular belief update alpha (default: same as --belief-update-alpha)")
-    parser.add_argument("--belief-miss-decay", type=float, default=float(auto_tracking_config.get("belief_miss_decay", 0.94)),
-                       help="Belief confidence decay per inference tick without detection (default: 0.94)")
-    parser.add_argument("--belief-min-confidence", type=float, default=float(auto_tracking_config.get("belief_min_confidence", 0.15)),
-                       help="Minimum angular belief confidence required to keep moving (default: 0.15)")
-    parser.add_argument("--belief-max-age", type=float, default=float(auto_tracking_config.get("belief_max_age", 1.5)),
-                       help="Maximum age in seconds for angular belief movement (default: 1.5)")
-    parser.add_argument("--belief-deadband-raw", type=int, default=int(auto_tracking_config.get("belief_deadband_raw", 4)),
-                       help="Raw servo-unit error treated as centered by angular belief control (default: 4)")
-    parser.add_argument("--belief-min-step-raw", type=int, default=int(auto_tracking_config.get("belief_min_step_raw", 3)),
-                       help="Minimum raw servo-unit correction while outside angular belief deadband (default: 3)")
-    parser.add_argument("--pitch-tracking-scale", type=float, default=float(auto_tracking_config.get("pitch_tracking_scale", 1.0)),
-                       help="Multiplier for vertical image error to pitch raw observation; higher uses more down/up pitch travel (default: 1.0)")
-    parser.add_argument("--belief-reseed-distance-raw", type=float, default=float(auto_tracking_config.get("belief_reseed_distance_raw", 160)),
-                       help="Raw-unit observation jump that starts a fresh angular belief instead of smoothing (default: 160)")
-    parser.add_argument("--belief-velocity-alpha", type=float, default=float(auto_tracking_config.get("belief_velocity_alpha", 0.45)),
-                       help="Angular belief velocity smoothing alpha from detections (default: 0.45)")
-    parser.add_argument("--belief-pitch-velocity-alpha", type=float, default=auto_tracking_config.get("belief_pitch_velocity_alpha", None),
-                       help="Optional pitch-only angular belief velocity alpha (default: same as --belief-velocity-alpha)")
-    parser.add_argument("--belief-velocity-decay", type=float, default=float(auto_tracking_config.get("belief_velocity_decay", 0.96)),
-                       help="Angular belief velocity decay per inference tick without detection (default: 0.96)")
-    parser.add_argument("--belief-max-velocity-raw-per-s", type=float, default=float(auto_tracking_config.get("belief_max_velocity_raw_per_s", 600)),
-                       help="Maximum angular belief target speed in raw servo units/sec (default: 600)")
-    parser.add_argument("--belief-max-pitch-velocity-raw-per-s", type=float, default=auto_tracking_config.get("belief_max_pitch_velocity_raw_per_s", None),
-                       help="Optional pitch-only angular belief target speed cap (default: same as --belief-max-velocity-raw-per-s)")
-    parser.add_argument("--belief-max-prediction-age", type=float, default=float(auto_tracking_config.get("belief_max_prediction_age", 0.45)),
-                       help="Maximum seconds to extrapolate target belief after the latest detection (default: 0.45)")
-    parser.add_argument("--belief-reseed-confirmations", type=int, default=int(auto_tracking_config.get("belief_reseed_confirmations", 2)),
-                       help="Matching far-jump detections required before reseeding angular belief (default: 2)")
-    parser.add_argument("--belief-reseed-match-distance-raw", type=float, default=float(auto_tracking_config.get("belief_reseed_match_distance_raw", 120)),
-                       help="Raw-unit distance for matching pending reseed detections (default: 120)")
-    parser.add_argument("--belief-reseed-max-interval", type=float, default=float(auto_tracking_config.get("belief_reseed_max_interval", 0.8)),
-                       help="Maximum seconds between matching pending reseed detections (default: 0.8)")
-    parser.add_argument("--calibration", type=str, default="camera_calibration.npz",
-                       help="Path to camera calibration file (.npz, default: camera_calibration.npz)")
-    parser.add_argument("--stereo", action="store_true",
-                       help="Enable stereo mode for depth estimation (requires stereo calibration)")
-    parser.add_argument("--baseline-override", type=float, default=None,
-                       help="Override stereo baseline in mm (use if calibration baseline is incorrect)")
-
-    # Trigger servo settings
-    parser.add_argument("--enable-trigger", action="store_true",
-                       help="Enable GPIO trigger servo")
-
-    # API settings
-    parser.add_argument("--api-host", type=str, default="0.0.0.0",
-                       help="Host for FastAPI server")
-    parser.add_argument("--api-port", type=int, default=8000,
-                       help="Port for FastAPI server")
-
-    args = parser.parse_args()
-
-    if args.target_class is None:
-        configured_targets = detection_config.get("target_classes")
-        if isinstance(configured_targets, str):
-            args.target_class = [configured_targets]
-        elif configured_targets:
-            args.target_class = list(configured_targets)
-
-    if args.video_only:
-        args.enable_camera = True
-        args.use_csi = True
-        args.disable_servos = True
-        args.no_connect = True
-        args.disable_detection = True
-
-    if args.stereo and args.calibration == "camera_calibration.npz":
-        default_stereo_calibration = "tools/vision/calibration/output_recal/stereo_calibration.npz"
-        if os.path.exists(default_stereo_calibration):
-            args.calibration = default_stereo_calibration
-
-    model_path = None
-    if args.enable_camera and not args.disable_detection:
-        model_path = args.model
-
-    # Create tracker and hand it to the web controller
-    tracker = CameraTracker(
-        port=args.port,
-        enable_servos=not args.disable_servos,
-        no_connect=args.no_connect,
-        enable_camera=args.enable_camera,
-        enable_trigger=args.enable_trigger,
-        model_path=model_path,
-        confidence_threshold=args.confidence,
-        camera_id=args.camera_id,
-        use_csi=args.use_csi,
-        invert_camera=args.invert_camera,
-        imgsz=args.imgsz,
-        inference_fps=args.inference_fps,
-        target_classes=args.target_class,
-        calibration_file=args.calibration,
-        stereo_mode=args.stereo,
-        baseline_override=args.baseline_override,
-        tracking_smoothing=args.tracking_smoothing,
-        max_yaw_step=args.max_yaw_step,
-        max_pitch_step=args.max_pitch_step,
-        tracking_control_fps=args.tracking_control_fps,
-        belief_update_alpha=args.belief_update_alpha,
-        belief_miss_decay=args.belief_miss_decay,
-        belief_min_confidence=args.belief_min_confidence,
-        belief_max_age=args.belief_max_age,
-        belief_deadband_raw=args.belief_deadband_raw,
-        belief_min_step_raw=args.belief_min_step_raw,
-        pitch_tracking_scale=args.pitch_tracking_scale,
-        belief_reseed_distance_raw=args.belief_reseed_distance_raw,
-        belief_velocity_alpha=args.belief_velocity_alpha,
-        belief_velocity_decay=args.belief_velocity_decay,
-        belief_max_velocity_raw_per_s=args.belief_max_velocity_raw_per_s,
-        belief_max_prediction_age=args.belief_max_prediction_age,
-        belief_reseed_confirmations=args.belief_reseed_confirmations,
-        belief_reseed_match_distance_raw=args.belief_reseed_match_distance_raw,
-        belief_reseed_max_interval=args.belief_reseed_max_interval,
-        belief_pitch_update_alpha=args.belief_pitch_update_alpha,
-        belief_pitch_velocity_alpha=args.belief_pitch_velocity_alpha,
-        belief_max_pitch_velocity_raw_per_s=args.belief_max_pitch_velocity_raw_per_s
+    runtime = parse_runtime_config(
+        argv=None,
+        raw_config=CONFIG,
+        inference_fps_default=INFERENCE_FPS,
+        path_exists=os.path.exists,
     )
+    settings = runtime.tracker
+
+    tracker = CameraTracker(**settings.to_tracker_kwargs())
     control_api.set_tracker(tracker)
 
     print("=" * 60)
     print("Camera Tracker Control System with Detection")
     print("=" * 60)
-    print(f"Tracking servos: {'ENABLED' if not args.disable_servos else 'DISABLED'}")
-    print(f"Trigger servo: {'ENABLED' if args.enable_trigger else 'DISABLED'}")
-    print(f"Camera: {'ENABLED' if args.enable_camera else 'DISABLED'}")
-    if args.enable_camera:
-        camera_type = "CSI (GStreamer)" if args.use_csi else "USB"
-        invert_status = "inverted (upside-down)" if args.invert_camera else "normal"
-        print(f"Camera type: {camera_type} (ID: {args.camera_id}, {invert_status})")
+    print(f"Tracking servos: {'ENABLED' if settings.enable_servos else 'DISABLED'}")
+    print(f"Trigger servo: {'ENABLED' if settings.enable_trigger else 'DISABLED'}")
+    print(f"Camera: {'ENABLED' if settings.enable_camera else 'DISABLED'}")
+    if settings.enable_camera:
+        camera_type = "CSI (GStreamer)" if settings.use_csi else "USB"
+        invert_status = "inverted (upside-down)" if settings.invert_camera else "normal"
+        print(f"Camera type: {camera_type} (ID: {settings.camera_id}, {invert_status})")
     else:
         print("Tip: use --video-only for Jetson CSI camera web streaming without servos or detection")
-    print(f"Detection: {'ENABLED' if model_path else 'DISABLED'}")
-    if model_path:
-        print(f"Model: {args.model}")
+    print(f"Detection: {'ENABLED' if settings.model_path else 'DISABLED'}")
+    if settings.model_path:
+        print(f"Model: {settings.requested_model}")
         target_classes = ", ".join(tracker.target_classes) if tracker.target_classes else "all"
         print(f"Target classes: {target_classes}")
-        print(f"Confidence threshold: {args.confidence}")
-        print(f"Inference image size: {args.imgsz}px")
+        print(f"Confidence threshold: {settings.confidence_threshold}")
+        print(f"Inference image size: {settings.imgsz}px")
         print(f"Inference FPS target: {tracker.inference_fps:g}")
         print(f"Tracking control FPS target: {tracker.tracking_control_fps:g}")
         print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations}")
@@ -1183,35 +1028,33 @@ def main():
     calib_status = "ENABLED" if tracker.stereo_depth.calibration_enabled else "DISABLED"
     if tracker.stereo_depth.calibration_enabled:
         calib_type = "STEREO" if tracker.stereo_depth.stereo_calibration_enabled else "SINGLE"
-        print(f"Calibration: {calib_status} ({calib_type}, {args.calibration})")
-    elif args.calibration != "camera_calibration.npz":
-        # Only show warning if user explicitly specified a file
+        print(f"Calibration: {calib_status} ({calib_type}, {settings.calibration_file})")
+    elif settings.calibration_file != "camera_calibration.npz":
         print(f"Calibration: {calib_status} (file not found)")
 
-    if args.stereo:
+    if settings.stereo_mode:
         stereo_status = "ENABLED" if tracker.stereo_depth.stereo_calibration_enabled else "DISABLED (no stereo calibration)"
         print(f"Stereo depth: {stereo_status}")
     print()
 
-    # Start API server in a separate thread
     api_thread = threading.Thread(
         target=run_api_server,
-        args=(args.api_host, args.api_port),
-        daemon=True
+        args=(runtime.api_host, runtime.api_port),
+        daemon=True,
     )
     api_thread.start()
-    print(f"Web interface: http://{args.api_host}:{args.api_port}")
+    print(f"Web interface: http://{runtime.api_host}:{runtime.api_port}")
     print()
 
     try:
         print("Server running. Press Ctrl+C to stop.")
-        # Keep main thread alive
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
         tracker.disconnect()
+
 
 if __name__ == "__main__":
     main()
