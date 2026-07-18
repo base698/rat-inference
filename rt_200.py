@@ -294,6 +294,8 @@ class CameraTracker:
                  inference_fps=None, target_classes=None, calibration_file=None,
                  stereo_mode=False, baseline_override=None,
                  tracking_smoothing=0.45, max_yaw_step=45, max_pitch_step=45,
+                 max_yaw_speed_raw_per_s=None,
+                 max_pitch_speed_raw_per_s=None,
                  tracking_control_fps=20, belief_update_alpha=0.45,
                  belief_miss_decay=0.94, belief_min_confidence=0.15,
                  belief_max_age=1.5, belief_deadband_raw=4,
@@ -302,8 +304,9 @@ class CameraTracker:
                  belief_velocity_decay=0.96, belief_max_velocity_raw_per_s=600,
                  belief_max_prediction_age=0.45, belief_reseed_confirmations=2,
                  belief_reseed_match_distance_raw=120,
-                 belief_reseed_max_interval=0.8, belief_pitch_update_alpha=None,
-                 belief_pitch_velocity_alpha=None,
+                 belief_reseed_max_interval=0.8,
+                 belief_reseed_min_confidence=0.55,
+                 belief_pitch_update_alpha=None, belief_pitch_velocity_alpha=None,
                  belief_max_pitch_velocity_raw_per_s=None):
         """
         Initialize the camera tracker
@@ -328,6 +331,8 @@ class CameraTracker:
             tracking_smoothing: Deprecated compatibility parameter; belief smoothing uses belief_update_alpha
             max_yaw_step: Maximum yaw raw-unit move per inference update
             max_pitch_step: Maximum pitch raw-unit move per control update
+            max_yaw_speed_raw_per_s: Optional yaw raw-unit speed cap for control interpolation
+            max_pitch_speed_raw_per_s: Optional pitch raw-unit speed cap for control interpolation
             tracking_control_fps: Servo control loop rate for angular target belief tracking
             belief_update_alpha: Weight of new observations when updating target belief
             belief_miss_decay: Confidence decay applied on inference ticks without detections
@@ -344,6 +349,7 @@ class CameraTracker:
             belief_reseed_confirmations: Matching far-jump detections required before reseed
             belief_reseed_match_distance_raw: Raw-unit distance for matching pending reseeds
             belief_reseed_max_interval: Maximum seconds between matching pending reseeds
+            belief_reseed_min_confidence: Minimum confidence for far-jump reseeds
             belief_pitch_update_alpha: Optional pitch-only belief update alpha
             belief_pitch_velocity_alpha: Optional pitch-only velocity update alpha
             belief_max_pitch_velocity_raw_per_s: Optional pitch-only velocity cap
@@ -372,6 +378,14 @@ class CameraTracker:
         self.target_classes = self._normalize_target_classes(target_classes)
         self.max_yaw_step = max(0, int(max_yaw_step))
         self.max_pitch_step = max(0, int(max_pitch_step))
+        self.max_yaw_speed_raw_per_s = (
+            None if max_yaw_speed_raw_per_s is None
+            else max(0.0, float(max_yaw_speed_raw_per_s))
+        )
+        self.max_pitch_speed_raw_per_s = (
+            None if max_pitch_speed_raw_per_s is None
+            else max(0.0, float(max_pitch_speed_raw_per_s))
+        )
         self.tracking_control_fps = max(1.0, float(tracking_control_fps))
         self.belief_update_alpha = max(0.0, min(1.0, float(belief_update_alpha)))
         self.belief_miss_decay = max(0.0, min(1.0, float(belief_miss_decay)))
@@ -388,6 +402,10 @@ class CameraTracker:
         self.belief_reseed_confirmations = max(1, int(belief_reseed_confirmations))
         self.belief_reseed_match_distance_raw = max(0.0, float(belief_reseed_match_distance_raw))
         self.belief_reseed_max_interval = max(0.0, float(belief_reseed_max_interval))
+        self.belief_reseed_min_confidence = max(
+            self.belief_min_confidence,
+            min(1.0, float(belief_reseed_min_confidence)),
+        )
         self.belief_pitch_update_alpha = (
             self.belief_update_alpha if belief_pitch_update_alpha is None
             else max(0.0, min(1.0, float(belief_pitch_update_alpha)))
@@ -504,6 +522,7 @@ class CameraTracker:
             reseed_confirmations=belief_reseed_confirmations,
             reseed_match_distance_raw=belief_reseed_match_distance_raw,
             reseed_max_interval=belief_reseed_max_interval,
+            reseed_min_confidence=self.belief_reseed_min_confidence,
             pitch_update_alpha=self.belief_pitch_update_alpha,
             pitch_velocity_alpha=self.belief_pitch_velocity_alpha,
             max_pitch_velocity_raw_per_s=self.belief_max_pitch_velocity_raw_per_s,
@@ -515,6 +534,8 @@ class CameraTracker:
             control_fps=tracking_control_fps,
             max_yaw_step=self.max_yaw_step,
             max_pitch_step=self.max_pitch_step,
+            max_yaw_speed_raw_per_s=self.max_yaw_speed_raw_per_s,
+            max_pitch_speed_raw_per_s=self.max_pitch_speed_raw_per_s,
             deadband_raw=belief_deadband_raw,
             min_step_raw=belief_min_step_raw
         )
@@ -1022,9 +1043,16 @@ def main():
         print(f"Inference image size: {settings.imgsz}px")
         print(f"Inference FPS target: {tracker.inference_fps:g}")
         print(f"Tracking control FPS target: {tracker.tracking_control_fps:g}")
-        print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations}")
+        print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations} @ conf>={tracker.belief_reseed_min_confidence:g}")
         print(f"Belief velocity: alpha={tracker.belief_velocity_alpha:g}, pitch_alpha={tracker.belief_pitch_velocity_alpha:g}, decay={tracker.belief_velocity_decay:g}, max={tracker.belief_max_velocity_raw_per_s:g}/{tracker.belief_max_pitch_velocity_raw_per_s:g} raw/s, predict={tracker.belief_max_prediction_age:g}s")
-        print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}, motor_readback={tracker.motor_readback_fps:g} FPS")
+        yaw_speed = tracker.max_yaw_speed_raw_per_s
+        pitch_speed = tracker.max_pitch_speed_raw_per_s
+        speed_limits = (
+            f"{yaw_speed:g}/{pitch_speed:g} raw/s"
+            if yaw_speed and pitch_speed
+            else "off"
+        )
+        print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, speed={speed_limits}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}, motor_readback={tracker.motor_readback_fps:g} FPS")
     calib_status = "ENABLED" if tracker.stereo_depth.calibration_enabled else "DISABLED"
     if tracker.stereo_depth.calibration_enabled:
         calib_type = "STEREO" if tracker.stereo_depth.stereo_calibration_enabled else "SINGLE"

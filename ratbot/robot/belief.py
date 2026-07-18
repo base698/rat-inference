@@ -25,8 +25,9 @@ class AngularTargetBelief:
                  velocity_alpha=0.45, velocity_decay=0.96,
                  max_velocity_raw_per_s=600, max_prediction_age=0.45,
                  reseed_confirmations=2, reseed_match_distance_raw=120,
-                 reseed_max_interval=0.8, pitch_update_alpha=None,
-                 pitch_velocity_alpha=None, max_pitch_velocity_raw_per_s=None):
+                 reseed_max_interval=0.8, reseed_min_confidence=0.55,
+                 pitch_update_alpha=None, pitch_velocity_alpha=None,
+                 max_pitch_velocity_raw_per_s=None):
         self.update_alpha = max(0.0, min(1.0, float(update_alpha)))
         self.pitch_update_alpha = (
             self.update_alpha if pitch_update_alpha is None
@@ -51,6 +52,15 @@ class AngularTargetBelief:
         self.reseed_confirmations = max(1, int(reseed_confirmations))
         self.reseed_match_distance_raw = max(0.0, float(reseed_match_distance_raw))
         self.reseed_max_interval = max(0.0, float(reseed_max_interval))
+        reseed_min_confidence = (
+            self.min_confidence
+            if reseed_min_confidence is None
+            else float(reseed_min_confidence)
+        )
+        self.reseed_min_confidence = max(
+            self.min_confidence,
+            min(1.0, reseed_min_confidence),
+        )
         self.lock = threading.Lock()
         self.yaw = None
         self.pitch = None
@@ -101,33 +111,39 @@ class AngularTargetBelief:
             if self.yaw is None or self.pitch is None or self.confidence <= 0:
                 reseed_reason = "empty"
             elif large_jump:
-                pending_age = now - self.pending_reseed_time if self.pending_reseed_time else float("inf")
-                pending_match = False
-                if self.pending_reseed_yaw is not None and self.pending_reseed_pitch is not None:
-                    pending_distance = max(
-                        abs(yaw - self.pending_reseed_yaw),
-                        abs(pitch - self.pending_reseed_pitch),
+                if confidence < self.reseed_min_confidence:
+                    ignored_reason = (
+                        f"low-conf jump {jump:.0f} "
+                        f"(conf {confidence:.2f} < {self.reseed_min_confidence:.2f})"
                     )
-                    pending_match = (
-                        pending_age <= self.reseed_max_interval
-                        and pending_distance <= self.reseed_match_distance_raw
-                    )
-
-                if pending_match:
-                    self.pending_reseed_count += 1
                 else:
-                    self.pending_reseed_count = 1
+                    pending_age = now - self.pending_reseed_time if self.pending_reseed_time else float("inf")
+                    pending_match = False
+                    if self.pending_reseed_yaw is not None and self.pending_reseed_pitch is not None:
+                        pending_distance = max(
+                            abs(yaw - self.pending_reseed_yaw),
+                            abs(pitch - self.pending_reseed_pitch),
+                        )
+                        pending_match = (
+                            pending_age <= self.reseed_max_interval
+                            and pending_distance <= self.reseed_match_distance_raw
+                        )
 
-                self.pending_reseed_yaw = yaw
-                self.pending_reseed_pitch = pitch
-                self.pending_reseed_time = now
+                    if pending_match:
+                        self.pending_reseed_count += 1
+                    else:
+                        self.pending_reseed_count = 1
 
-                if self.pending_reseed_count >= self.reseed_confirmations:
-                    reason_prefix = "stale " if stale else "weak " if weak else ""
-                    reseed_reason = f"{reason_prefix}jump {jump:.0f} confirmed"
-                else:
-                    reason_prefix = "stale " if stale else "weak " if weak else ""
-                    ignored_reason = f"pending {reason_prefix}jump {jump:.0f}"
+                    self.pending_reseed_yaw = yaw
+                    self.pending_reseed_pitch = pitch
+                    self.pending_reseed_time = now
+
+                    if self.pending_reseed_count >= self.reseed_confirmations:
+                        reason_prefix = "stale " if stale else "weak " if weak else ""
+                        reseed_reason = f"{reason_prefix}jump {jump:.0f} confirmed"
+                    else:
+                        reason_prefix = "stale " if stale else "weak " if weak else ""
+                        ignored_reason = f"pending {reason_prefix}jump {jump:.0f}"
             elif stale:
                 reseed_reason = "stale"
             elif weak:
@@ -264,6 +280,8 @@ class AngularBeliefController:
 
     def __init__(self, robot, belief, bounds, control_fps=20,
                  max_yaw_step=45, max_pitch_step=45,
+                 max_yaw_speed_raw_per_s=None,
+                 max_pitch_speed_raw_per_s=None,
                  deadband_raw=4, min_step_raw=3):
         self.robot = robot
         self.belief = belief
@@ -271,6 +289,12 @@ class AngularBeliefController:
         self.control_fps = max(1.0, float(control_fps))
         self.max_yaw_step = max(0, int(max_yaw_step))
         self.max_pitch_step = max(0, int(max_pitch_step))
+        self.max_yaw_speed_raw_per_s = self._optional_positive_float(
+            max_yaw_speed_raw_per_s
+        )
+        self.max_pitch_speed_raw_per_s = self._optional_positive_float(
+            max_pitch_speed_raw_per_s
+        )
         self.deadband_raw = max(0, int(deadband_raw))
         self.min_step_raw = max(0, int(min_step_raw))
         self.yaw_integral = 0.0
@@ -280,6 +304,15 @@ class AngularBeliefController:
         self.last_time = time.time()
         self.loop_count = 0
         self.window_start = time.time()
+
+    @staticmethod
+    def _optional_positive_float(value):
+        if value is None:
+            return None
+        value = float(value)
+        if value <= 0:
+            return None
+        return value
 
     def reset(self):
         self.yaw_integral = 0.0
@@ -307,6 +340,20 @@ class AngularBeliefController:
             return desired_position
 
         return current_position + (max_step if delta > 0 else -max_step)
+
+    def _limit_speed(self, current_position, desired_position, max_speed, dt):
+        if max_speed is None:
+            return desired_position
+
+        max_delta = max_speed * dt
+        if max_delta <= 0:
+            return current_position
+
+        delta = desired_position - current_position
+        if abs(delta) <= max_delta:
+            return desired_position
+
+        return current_position + (max_delta if delta > 0 else -max_delta)
 
     def track_once(self):
         belief = self.belief.get_active()
@@ -353,6 +400,20 @@ class AngularBeliefController:
         desired_pitch = max(self.bounds.pitch_min, min(self.bounds.pitch_max, desired_pitch))
         desired_yaw = self._limit_step(self.robot.current_yaw, desired_yaw, self.max_yaw_step)
         desired_pitch = self._limit_step(self.robot.current_pitch, desired_pitch, self.max_pitch_step)
+        desired_yaw = self._limit_speed(
+            self.robot.current_yaw,
+            desired_yaw,
+            self.max_yaw_speed_raw_per_s,
+            dt,
+        )
+        desired_pitch = self._limit_speed(
+            self.robot.current_pitch,
+            desired_pitch,
+            self.max_pitch_speed_raw_per_s,
+            dt,
+        )
+        desired_yaw = int(round(desired_yaw))
+        desired_pitch = int(round(desired_pitch))
 
         if desired_yaw == self.robot.current_yaw and desired_pitch == self.robot.current_pitch:
             return

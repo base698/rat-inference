@@ -35,6 +35,8 @@ class TrackerRuntimeConfig:
     tracking_smoothing: float
     max_yaw_step: int
     max_pitch_step: int
+    max_yaw_speed_raw_per_s: float | None
+    max_pitch_speed_raw_per_s: float | None
     tracking_control_fps: float
     belief_update_alpha: float
     belief_miss_decay: float
@@ -51,6 +53,7 @@ class TrackerRuntimeConfig:
     belief_reseed_confirmations: int
     belief_reseed_match_distance_raw: float
     belief_reseed_max_interval: float
+    belief_reseed_min_confidence: float
     belief_pitch_update_alpha: float | None
     belief_pitch_velocity_alpha: float | None
     belief_max_pitch_velocity_raw_per_s: float | None
@@ -105,6 +108,8 @@ def build_argument_parser(
         "tracking_smoothing": "Detection center smoothing alpha for auto tracking: 0 disables, 1 follows raw detections (default: 0.45)",
         "max_yaw_step": "Maximum yaw raw-unit move per inference update for smoother tracking (default: 45)",
         "max_pitch_step": "Maximum pitch raw-unit move per control update for smoother tracking (default: 45)",
+        "max_yaw_speed_raw_per_s": "Optional yaw raw-unit speed cap for smoother control interpolation",
+        "max_pitch_speed_raw_per_s": "Optional pitch raw-unit speed cap for smoother control interpolation",
         "tracking_control_fps": "Servo control loop FPS for angular target belief tracking (default: 20)",
         "belief_update_alpha": "Angular belief update alpha from new detections: 0 ignores, 1 jumps to observation (default: 0.45)",
         "belief_pitch_update_alpha": "Optional pitch-only angular belief update alpha (default: same as --belief-update-alpha)",
@@ -124,6 +129,7 @@ def build_argument_parser(
         "belief_reseed_confirmations": "Matching far-jump detections required before reseeding angular belief (default: 2)",
         "belief_reseed_match_distance_raw": "Raw-unit distance for matching pending reseed detections (default: 120)",
         "belief_reseed_max_interval": "Maximum seconds between matching pending reseed detections (default: 0.8)",
+        "belief_reseed_min_confidence": "Minimum confidence allowed to start/confirm a far-jump angular belief reseed (default: 0.55)",
         "calibration": "Path to camera calibration file (.npz, default: camera_calibration.npz)",
         "stereo": "Enable stereo mode for depth estimation (requires stereo calibration)",
         "baseline_override": "Override stereo baseline in mm (use if calibration baseline is incorrect)",
@@ -171,6 +177,16 @@ def build_argument_parser(
         "--max-pitch-step",
         type=int,
         default=int(auto.get("max_pitch_step", 45)),
+    )
+    parser.add_argument(
+        "--max-yaw-speed-raw-per-s",
+        type=float,
+        default=auto.get("max_yaw_speed_raw_per_s"),
+    )
+    parser.add_argument(
+        "--max-pitch-speed-raw-per-s",
+        type=float,
+        default=auto.get("max_pitch_speed_raw_per_s"),
     )
     parser.add_argument(
         "--tracking-control-fps",
@@ -268,6 +284,11 @@ def build_argument_parser(
         default=float(auto.get("belief_reseed_max_interval", 0.8)),
     )
     parser.add_argument(
+        "--belief-reseed-min-confidence",
+        type=float,
+        default=float(auto.get("belief_reseed_min_confidence", 0.55)),
+    )
+    parser.add_argument(
         "--calibration", type=str, default="camera_calibration.npz"
     )
     parser.add_argument("--stereo", action="store_true")
@@ -346,6 +367,8 @@ def parse_runtime_config(
         tracking_smoothing=args.tracking_smoothing,
         max_yaw_step=args.max_yaw_step,
         max_pitch_step=args.max_pitch_step,
+        max_yaw_speed_raw_per_s=args.max_yaw_speed_raw_per_s,
+        max_pitch_speed_raw_per_s=args.max_pitch_speed_raw_per_s,
         tracking_control_fps=args.tracking_control_fps,
         belief_update_alpha=args.belief_update_alpha,
         belief_miss_decay=args.belief_miss_decay,
@@ -362,6 +385,7 @@ def parse_runtime_config(
         belief_reseed_confirmations=args.belief_reseed_confirmations,
         belief_reseed_match_distance_raw=args.belief_reseed_match_distance_raw,
         belief_reseed_max_interval=args.belief_reseed_max_interval,
+        belief_reseed_min_confidence=args.belief_reseed_min_confidence,
         belief_pitch_update_alpha=args.belief_pitch_update_alpha,
         belief_pitch_velocity_alpha=args.belief_pitch_velocity_alpha,
         belief_max_pitch_velocity_raw_per_s=(

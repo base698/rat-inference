@@ -80,12 +80,15 @@ tracking:
 
   # Auto tracking smoothing
   # Detections update an angular target belief; a separate control loop moves toward it.
-  # max_*_step caps per-control-tick servo jumps in raw units to reduce jerky motion.
+  # max_*_step caps per-control-tick servo jumps as a fallback.
+  # max_*_speed_raw_per_s caps motion by time so higher control FPS uses smaller steps.
   auto_tracking:
     smoothing_alpha: 0.45
     max_yaw_step: 45
     max_pitch_step: 35
-    control_fps: 20
+    max_yaw_speed_raw_per_s: 900
+    max_pitch_speed_raw_per_s: 700
+    control_fps: 60
     belief_update_alpha: 0.75
     belief_pitch_update_alpha: 0.35
     belief_miss_decay: 0.90
@@ -98,6 +101,7 @@ tracking:
     belief_reseed_confirmations: 2
     belief_reseed_match_distance_raw: 120
     belief_reseed_max_interval: 0.8
+    belief_reseed_min_confidence: 0.55
     belief_velocity_alpha: 0.45
     belief_pitch_velocity_alpha: 0.25
     belief_velocity_decay: 0.96
@@ -121,7 +125,7 @@ pid:
   yaw:
     kp: 0.70   # Proportional gain
     ki: 0.00   # Integral gain
-    kd: 0.03   # Derivative gain
+    kd: 0.00   # Derivative gain
 
   pitch:
     kp: 0.90   # Proportional gain

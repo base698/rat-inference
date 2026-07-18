@@ -161,12 +161,15 @@ uv run --extra jetson python rt_200.py \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.70 \
   --inference-fps 20 \
-  --tracking-control-fps 20 \
+  --tracking-control-fps 60 \
   --belief-update-alpha 0.75 \
   --max-yaw-step 45 \
-  --max-pitch-step 45 \
+  --max-pitch-step 35 \
+  --max-yaw-speed-raw-per-s 900 \
+  --max-pitch-speed-raw-per-s 700 \
   --pitch-tracking-scale 2.2 \
-  --belief-reseed-distance-raw 160
+  --belief-reseed-distance-raw 160 \
+  --belief-reseed-min-confidence 0.55
 ```
 
 #### Stereo Depth + Laser Tracking
@@ -233,11 +236,11 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 **Tracking Smoothness:**
 - Vision detections update an angular target belief in turret coordinates. The servo controller runs separately and moves toward that belief, so motion can continue smoothly between missed detections.
 - `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current test value: `0.75`. Non-jump stale/weak beliefs reset directly to the first new observation, while far jumps use the confirmation gate below.
-- `--belief-reseed-distance-raw` marks a far-away observation as a possible target jump. The first jump is ignored while the existing belief continues; a second matching jump within `--belief-reseed-max-interval` confirms reacquisition. Current test values: `160` raw units, `2` confirmations, `120` raw-unit match distance, `0.8s` interval.
+- `--belief-reseed-distance-raw` marks a far-away observation as a possible target jump. The first jump is ignored while the existing belief continues; a second matching jump within `--belief-reseed-max-interval` confirms reacquisition. Current test values: `160` raw units, `2` confirmations, `120` raw-unit match distance, `0.8s` interval, and `0.55` minimum confidence for jump reseeds.
 - `--belief-velocity-alpha`, `--belief-velocity-decay`, `--belief-max-velocity-raw-per-s`, and `--belief-max-prediction-age` add a bounded target-velocity estimate to the belief. This lets the controller continue briefly toward a target that was moving when detections drop at the frame edge. Current test values: `0.45`, `0.96`, `600 raw/s`, `0.45s`.
 - Pitch is damped separately because vertical detections are noisier: `--belief-pitch-update-alpha` is currently `0.35`, `--belief-pitch-velocity-alpha` is `0.25`, `--belief-max-pitch-velocity-raw-per-s` is `180`, and `--max-pitch-step` is `35`.
-- `--tracking-control-fps` controls how often the servo controller reads belief and commands the robot.
-- `--max-yaw-step` and `--max-pitch-step` cap per-control-tick servo moves in raw units. Lower values reduce jerk but slow convergence.
+- `--tracking-control-fps` controls how often the servo controller reads belief and commands the robot. Current test value: `60`.
+- `--max-yaw-step` and `--max-pitch-step` cap per-control-tick servo moves in raw units. `--max-yaw-speed-raw-per-s` and `--max-pitch-speed-raw-per-s` cap motion by elapsed time so higher control FPS produces smaller interpolated moves. Current test values: `45`, `35`, `900 raw/s`, and `700 raw/s`.
 - `--pitch-tracking-scale` multiplies vertical image error before converting it into pitch raw units. The RT-200 pitch servo uses `1` as full up and `500` as full down; the current test value `2.2` gives below-crosshair detections more downward authority.
 - Pitch derivative gain is currently `0.00` so the pitch loop follows the belief without derivative kick from servo readback lag.
 - `tracking.video_fps` is currently `30` so inference has fresh camera frames; `tracking.motor_readback_fps` is currently `10` so the video overlay does not poll servo position on every frame.
