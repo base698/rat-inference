@@ -24,6 +24,9 @@ from ratbot.robot import (
     DepthCrosshairCompensation,
     PitchCompensation,
     ServoBounds,
+    TrackingServoController,
+    TriggerServoConfig,
+    TriggerServoController,
     YawCompensation,
 )
 from ratbot.web import ControlApiConfig, create_control_app
@@ -63,6 +66,9 @@ except ImportError:
     print("YOLO not available - detection features disabled")
 
 # Try importing Feetech servo libraries
+FeetechMotorsBus = None
+Motor = None
+MotorNormMode = None
 try:
     from lerobot.motors.feetech import FeetechMotorsBus
     from lerobot.motors.motors_bus import Motor, MotorNormMode
@@ -340,8 +346,6 @@ class CameraTracker:
         self.port = port
         self.enable_servos = enable_servos
         self.no_connect = no_connect
-        self.connected = False
-        self.motor_bus = None
 
         # Camera and detection
         self.enable_camera = enable_camera and CV2_AVAILABLE
@@ -399,7 +403,6 @@ class CameraTracker:
         self.recent_detections = []
         self.frame_lock = threading.Lock()
         self.inference_lock = threading.Lock()
-        self.motor_lock = threading.Lock()
         self.inference_loop_count = 0
         self.inference_fps_window_start = time.time()
 
@@ -425,13 +428,28 @@ class CameraTracker:
         self.display_depth_adjust_initialized = False
         self.stereo_depth.last_depth_debug = "not computed"
 
-        # Trigger servo (uses sysfs PWM, doesn't need GPIO library)
-        self.trigger_servo_enabled = enable_trigger
-        self.trigger_pwm_path = None
-
-        # Current positions for tracking servos
-        self.current_yaw = YAW_CENTER
-        self.current_pitch = PITCH_CENTER
+        servo_bounds = ServoBounds(YAW_MIN, YAW_MAX, PITCH_MIN, PITCH_MAX)
+        self.tracking_servos = TrackingServoController(
+            port=port,
+            enabled=enable_servos,
+            bounds=servo_bounds,
+            yaw_center=YAW_CENTER,
+            pitch_center=PITCH_CENTER,
+            yaw_motor_id=YAW_MOTOR_ID,
+            pitch_motor_id=PITCH_MOTOR_ID,
+            bus_factory=FeetechMotorsBus if FEETECH_AVAILABLE else None,
+            motor_factory=Motor if FEETECH_AVAILABLE else None,
+            norm_mode=getattr(MotorNormMode, "RANGE_M100_100", None),
+        )
+        self.trigger_servo = TriggerServoController(
+            enabled=enable_trigger,
+            config=TriggerServoConfig(
+                pwm_chip=TRIGGER_PWM_CHIP,
+                pwm_channel=TRIGGER_PWM_CHANNEL,
+                neutral_angle=TRIGGER_NEUTRAL_ANGLE,
+                action_angle=TRIGGER_ACTION_ANGLE,
+            ),
+        )
 
         # PID controller state
         self.pid_yaw_integral = 0.0
@@ -484,12 +502,7 @@ class CameraTracker:
         self.tracking_controller = AngularBeliefController(
             robot=self,
             belief=self.target_belief,
-            bounds=ServoBounds(
-                yaw_min=YAW_MIN,
-                yaw_max=YAW_MAX,
-                pitch_min=PITCH_MIN,
-                pitch_max=PITCH_MAX,
-            ),
+            bounds=servo_bounds,
             control_fps=tracking_control_fps,
             max_yaw_step=self.max_yaw_step,
             max_pitch_step=self.max_pitch_step,
@@ -503,11 +516,11 @@ class CameraTracker:
 
         # Initialize tracking servos if enabled
         if self.enable_servos and not self.no_connect and FEETECH_AVAILABLE:
-            self.connect_servos()
+            self.tracking_servos.connect()
 
         # Initialize trigger servo if enabled
         if self.trigger_servo_enabled:
-            self.init_trigger_servo()
+            self.trigger_servo.initialize()
 
         # Initialize camera if enabled
         if self.enable_camera:
@@ -575,11 +588,29 @@ class CameraTracker:
 
         return int(round(smooth_x)), int(round(smooth_y))
 
+    @property
+    def connected(self):
+        return self.tracking_servos.connected
 
+    @connected.setter
+    def connected(self, connected):
+        self.tracking_servos.connected = bool(connected)
 
+    @property
+    def current_yaw(self):
+        return self.tracking_servos.current_yaw
 
+    @current_yaw.setter
+    def current_yaw(self, position):
+        self.tracking_servos.current_yaw = int(position)
 
+    @property
+    def current_pitch(self):
+        return self.tracking_servos.current_pitch
 
+    @current_pitch.setter
+    def current_pitch(self, position):
+        self.tracking_servos.current_pitch = int(position)
 
     @property
     def calibration_enabled(self):
@@ -591,76 +622,34 @@ class CameraTracker:
         """Compatibility view of the extracted stereo calibration state."""
         return self.stereo_depth.stereo_calibration_enabled
 
-    def init_trigger_servo(self):
-        """Initialize PWM trigger servo using sysfs"""
-        try:
-            pwm_path = f"/sys/class/pwm/pwmchip{TRIGGER_PWM_CHIP}/pwm{TRIGGER_PWM_CHANNEL}"
-            export_path = f"/sys/class/pwm/pwmchip{TRIGGER_PWM_CHIP}/export"
+    @property
+    def trigger_servo_enabled(self):
+        return self.trigger_servo.enabled
 
-            # Export PWM channel if not already exported
-            if not os.path.exists(pwm_path):
-                with open(export_path, 'w') as f:
-                    f.write(str(TRIGGER_PWM_CHANNEL))
-                time.sleep(0.2)
+    @trigger_servo_enabled.setter
+    def trigger_servo_enabled(self, enabled):
+        self.trigger_servo.enabled = bool(enabled)
 
-            # Store PWM path
-            self.trigger_pwm_path = pwm_path
+    def read_motor_positions(self):
+        return self.tracking_servos.read_positions()
 
-            # Set period (20ms = 50Hz)
-            with open(f"{pwm_path}/period", 'w') as f:
-                f.write('20000000')  # 20ms in nanoseconds
+    def set_yaw(self, position):
+        self.tracking_servos.set_yaw(position)
 
-            # Enable PWM
-            with open(f"{pwm_path}/enable", 'w') as f:
-                f.write('1')
-
-            # Set to neutral position
-            self.set_trigger_angle(TRIGGER_NEUTRAL_ANGLE)
-
-            print(f"✓ Trigger servo initialized on PWM chip {TRIGGER_PWM_CHIP} (Pin 15, GPIO12)")
-            print(f"  Neutral: {TRIGGER_NEUTRAL_ANGLE}°, Trigger: {TRIGGER_ACTION_ANGLE}°")
-        except Exception as e:
-            print(f"Failed to initialize trigger servo: {e}")
-            self.trigger_servo_enabled = False
-            self.trigger_pwm_path = None
-
-    def set_trigger_angle(self, angle):
-        """Set trigger servo angle (0-180 degrees) using sysfs PWM"""
-        if not self.trigger_servo_enabled or not hasattr(self, 'trigger_pwm_path') or not self.trigger_pwm_path:
-            return
-
-        try:
-            # Clamp angle
-            angle = max(0, min(180, angle))
-
-            # Convert angle to pulse width (nanoseconds)
-            # MG996R: 0.5ms (500000ns) = 0°, 2.5ms (2500000ns) = 180°
-            min_pulse = 500000
-            max_pulse = 2500000
-            pulse_width = int(min_pulse + (angle / 180.0) * (max_pulse - min_pulse))
-
-            # Set duty cycle
-            with open(f"{self.trigger_pwm_path}/duty_cycle", 'w') as f:
-                f.write(str(pulse_width))
-
-            # Ensure it's enabled
-            with open(f"{self.trigger_pwm_path}/enable", 'w') as f:
-                f.write('1')
-
-        except Exception as e:
-            print(f"Error setting trigger angle: {e}")
+    def set_pitch(self, position):
+        self.tracking_servos.set_pitch(position)
 
     def trigger_action_servo(self):
-        """Trigger the action servo"""
-        if not self.trigger_servo_enabled:
-            print("[TRIGGER SIMULATION] Would trigger servo")
-            return
+        self.trigger_servo.fire()
 
-        print("Triggering action servo...")
-        self.set_trigger_angle(TRIGGER_ACTION_ANGLE)  # Move to trigger position (30°)
-        time.sleep(1)  # Hold for 1 second
-        self.set_trigger_angle(TRIGGER_NEUTRAL_ANGLE)  # Return to neutral (70°)
-        print("Trigger complete")
+
+
+
+
+
+
+
+
 
     def gstreamer_pipeline(self, sensor_id=0, capture_width=1280, capture_height=720,
                            display_width=640, display_height=480, framerate=30, flip_method=0):
@@ -780,100 +769,10 @@ class CameraTracker:
             print(f"Failed to load model: {e}")
             self.model = None
 
-    def read_motor_positions(self):
-        """Read current positions from motors"""
-        if not self.motor_bus or not self.connected:
-            return self.current_yaw, self.current_pitch
 
-        try:
-            with self.motor_lock:
-                yaw_pos = self.motor_bus.read("Present_Position", "yaw", normalize=False)
-                pitch_pos = self.motor_bus.read("Present_Position", "pitch", normalize=False)
-            return int(yaw_pos), int(pitch_pos)
-        except Exception as e:
-            print(f"Error reading motor positions: {e}")
-            return self.current_yaw, self.current_pitch
 
-    def connect_servos(self):
-        """Connect to Feetech tracking servos"""
-        import signal
 
-        def timeout_handler(signum, frame):
-            raise TimeoutError("Connection timed out")
 
-        previous_alarm_handler = signal.getsignal(signal.SIGALRM)
-
-        try:
-            # Define motors with their IDs and models
-            motors = {
-                "yaw": Motor(YAW_MOTOR_ID, "sts3215", MotorNormMode.RANGE_M100_100),
-                "pitch": Motor(PITCH_MOTOR_ID, "sts3215", MotorNormMode.RANGE_M100_100)
-            }
-
-            # Initialize motor bus
-            self.motor_bus = FeetechMotorsBus(self.port, motors)
-
-            # Set a timeout for connection (5 seconds)
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(5)
-
-            try:
-                self.motor_bus.connect(handshake=False)
-            except TimeoutError:
-                print(f"Connection timed out after 5 seconds on {self.port}")
-                raise
-            finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, previous_alarm_handler)
-
-            self.connected = True
-
-            # Read actual current positions from motors
-            actual_yaw, actual_pitch = self.read_motor_positions()
-            self.current_yaw = actual_yaw
-            self.current_pitch = actual_pitch
-
-            print(f"✓ Connected to tracking servos on {self.port}")
-            print(f"  Yaw motor (ID {YAW_MOTOR_ID}): {YAW_MIN}-{YAW_MAX} raw")
-            print(f"  Pitch motor (ID {PITCH_MOTOR_ID}): {PITCH_MIN}-{PITCH_MAX} raw")
-            print(f"  Current positions: Yaw={actual_yaw}, Pitch={actual_pitch}")
-
-        except Exception as e:
-            print(f"Failed to connect to tracking servos: {e}")
-            self.connected = False
-            self.motor_bus = None
-
-    def raw_write(self, motor_name, value):
-        """Write raw value directly to motor"""
-        if not self.motor_bus or not self.connected:
-            print(f"[SERVO SIMULATION] Would move {motor_name} to {value}")
-            return
-
-        try:
-            # Ensure value is a positive integer (unsigned)
-            # Feetech servos use 16-bit unsigned position values (0-65535)
-            value = int(value) & 0xFFFF  # Mask to 16-bit unsigned
-            # Write directly to Goal_Position register
-            with self.motor_lock:
-                self.motor_bus.write("Goal_Position", motor_name, value, normalize=False)
-        except Exception as e:
-            print(f"Error writing to {motor_name}: {e}")
-
-    def set_yaw(self, position):
-        """Set yaw position"""
-        position = max(YAW_MIN, min(YAW_MAX, int(position)))
-        self.current_yaw = position
-
-        if self.enable_servos:
-            self.raw_write("yaw", position)
-
-    def set_pitch(self, position):
-        """Set pitch position"""
-        position = max(PITCH_MIN, min(PITCH_MAX, int(position)))
-        self.current_pitch = position
-
-        if self.enable_servos:
-            self.raw_write("pitch", position)
 
     def smooth_display_depth_adjust(self, target_adjust_px):
         """Smooth the visual crosshair depth offset without affecting tracking math."""
@@ -1289,7 +1188,7 @@ class CameraTracker:
                 self.motor_readback_interval <= 0
                 or time.time() - self.last_motor_readback_time >= self.motor_readback_interval
             )
-            if self.connected and self.motor_bus and readback_due:
+            if self.connected and self.tracking_servos.motor_bus and readback_due:
                 try:
                     self.last_motor_readback_time = time.time()
                     yaw_pos, pitch_pos = self.read_motor_positions()
@@ -1527,28 +1426,8 @@ class CameraTracker:
             except:
                 pass
 
-        # Cleanup PWM trigger servo
-        if self.trigger_servo_enabled and hasattr(self, 'trigger_pwm_path') and self.trigger_pwm_path:
-            try:
-                # Disable PWM
-                with open(f"{self.trigger_pwm_path}/enable", 'w') as f:
-                    f.write('0')
-                # Unexport PWM
-                unexport_path = f"/sys/class/pwm/pwmchip{TRIGGER_PWM_CHIP}/unexport"
-                with open(unexport_path, 'w') as f:
-                    f.write(str(TRIGGER_PWM_CHANNEL))
-            except:
-                pass
-
-        # Disconnect tracking servos
-        if self.motor_bus:
-            try:
-                self.motor_bus.disconnect()
-                print("Disconnected from servos")
-            except:
-                pass
-
-        self.connected = False
+        self.trigger_servo.close()
+        self.tracking_servos.close()
         self.camera_active = False
 
 def run_api_server(host="0.0.0.0", port=8000):
