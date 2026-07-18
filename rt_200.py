@@ -24,8 +24,10 @@ from ratbot.robot import (
     AngularTargetBelief,
     CrosshairAiming,
     DepthCrosshairCompensation,
+    ObservationConfig,
     PitchCompensation,
     ServoBounds,
+    TrackingObservationConverter,
     TrackingServoController,
     TriggerServoConfig,
     TriggerServoController,
@@ -323,7 +325,7 @@ class CameraTracker:
             calibration_file: Path to camera calibration file (.npz)
             stereo_mode: Use stereo cameras for depth estimation
             baseline_override: Override baseline in mm (if calibration is incorrect)
-            tracking_smoothing: Detection center smoothing alpha (0 disables, 1 follows raw detections)
+            tracking_smoothing: Deprecated compatibility parameter; belief smoothing uses belief_update_alpha
             max_yaw_step: Maximum yaw raw-unit move per inference update
             max_pitch_step: Maximum pitch raw-unit move per control update
             tracking_control_fps: Servo control loop rate for angular target belief tracking
@@ -368,7 +370,6 @@ class CameraTracker:
         self.imgsz = imgsz
         self.inference_fps = max(1.0, float(inference_fps or INFERENCE_FPS))
         self.target_classes = self._normalize_target_classes(target_classes)
-        self.tracking_smoothing = max(0.0, min(1.0, float(tracking_smoothing)))
         self.max_yaw_step = max(0, int(max_yaw_step))
         self.max_pitch_step = max(0, int(max_pitch_step))
         self.tracking_control_fps = max(1.0, float(tracking_control_fps))
@@ -404,7 +405,6 @@ class CameraTracker:
         self.latest_detection = False
         self.latest_bbox = None  # Store latest bounding box (x1, y1, x2, y2)
         self.latest_center_point = None  # Store latest center point (x, y)
-        self.smoothed_tracking_center = None
         self.latest_depth = None  # Store depth in mm at detection point
         self.recent_detections = []
         self.frame_lock = threading.Lock()
@@ -460,14 +460,26 @@ class CameraTracker:
             ),
         )
 
-        # PID controller state
-        self.pid_yaw_integral = 0.0
-        self.pid_pitch_integral = 0.0
-        self.pid_yaw_prev_error = 0.0
-        self.pid_pitch_prev_error = 0.0
-        self.pid_last_time = time.time()
+        self.observation_converter = TrackingObservationConverter(
+            config=ObservationConfig(
+                image_width=640,
+                image_height=480,
+                horizontal_fov_degrees=60.0,
+                vertical_fov_degrees=45.0,
+                yaw_min=YAW_MIN,
+                yaw_max=YAW_MAX,
+                pitch_min=PITCH_MIN,
+                pitch_max=PITCH_MAX,
+                yaw_range_degrees=180.0,
+                pitch_range_degrees=55.0,
+                pitch_tracking_scale=self.pitch_tracking_scale,
+            ),
+            aiming=AIMING,
+            stereo_depth=self.stereo_depth,
+            crosshair_x=get_target_crosshair_x,
+            crosshair_y=get_target_crosshair_y,
+        )
 
-        # PID gains (tune these for your system)
         pid_config = CONFIG.get('pid', {}) if CONFIG else {}
         yaw_pid_config = pid_config.get('yaw', {})
         pitch_pid_config = pid_config.get('pitch', {})
@@ -478,18 +490,6 @@ class CameraTracker:
         self.pid_pitch_ki = float(pitch_pid_config.get('ki', 0.01))
         self.pid_pitch_kd = float(pitch_pid_config.get('kd', 0.03))
         self.pid_max_integral = float(pid_config.get('max_integral', 10.0))
-
-        # Camera and servo calibration
-        # Assuming camera FOV (field of view) - adjust these based on your camera specs
-        self.camera_fov_horizontal = 60.0  # degrees (typical for many webcams)
-        self.camera_fov_vertical = 45.0    # degrees
-        self.image_width = 640
-        self.image_height = 480
-
-        # Servo range in degrees (estimate - needs calibration)
-        # These are the angular ranges that the servos can physically move
-        self.yaw_range_degrees = 180.0    # Total yaw range in degrees
-        self.pitch_range_degrees = 55.0   # Total pitch range in degrees
 
         self.target_belief = AngularTargetBelief(
             update_alpha=belief_update_alpha,
@@ -565,37 +565,6 @@ class CameraTracker:
             return []
 
         return normalized
-
-    @staticmethod
-    def _minimum_tracking_step(raw_delta, pixel_error, deadband_px=8, min_step=6):
-        if abs(pixel_error) <= deadband_px or abs(raw_delta) >= min_step:
-            return raw_delta
-
-        return min_step if pixel_error > 0 else -min_step
-
-    @staticmethod
-    def _limit_tracking_step(current_position, desired_position, max_step):
-        if max_step <= 0:
-            return desired_position
-
-        delta = desired_position - current_position
-        if abs(delta) <= max_step:
-            return desired_position
-
-        return current_position + (max_step if delta > 0 else -max_step)
-
-    def smooth_tracking_center(self, center_x, center_y):
-        if self.tracking_smoothing <= 0 or self.smoothed_tracking_center is None:
-            self.smoothed_tracking_center = (float(center_x), float(center_y))
-            return center_x, center_y
-
-        alpha = self.tracking_smoothing
-        prev_x, prev_y = self.smoothed_tracking_center
-        smooth_x = (alpha * center_x) + ((1.0 - alpha) * prev_x)
-        smooth_y = (alpha * center_y) + ((1.0 - alpha) * prev_y)
-        self.smoothed_tracking_center = (smooth_x, smooth_y)
-
-        return int(round(smooth_x)), int(round(smooth_y))
 
     @property
     def connected(self):
@@ -703,6 +672,21 @@ class CameraTracker:
             center_point=center_point,
         )
 
+    def angle_to_servo_raw(self, angle_delta, axis='yaw'):
+        return self.observation_converter.angle_to_servo_raw(angle_delta, axis)
+
+    def servo_raw_to_angle(self, raw_delta, axis='yaw'):
+        return self.observation_converter.servo_raw_to_angle(raw_delta, axis)
+
+    def pixel_to_target_position(self, target_x, target_y, depth_mm=None):
+        return self.observation_converter.to_servo_target(
+            target_x=target_x,
+            target_y=target_y,
+            current_yaw=self.current_yaw,
+            current_pitch=self.current_pitch,
+            depth_mm=depth_mm,
+        )
+
 
 
 
@@ -730,119 +714,10 @@ class CameraTracker:
 
 
 
-    def pixels_to_angle(self, pixel_error, image_dimension, fov_degrees):
-        """
-        Convert pixel error to angular error in degrees
 
-        Args:
-            pixel_error: Error in pixels from center
-            image_dimension: Width or height of image in pixels
-            fov_degrees: Field of view in degrees for this dimension
 
-        Returns:
-            Angular error in degrees
-        """
-        # Calculate degrees per pixel
-        degrees_per_pixel = fov_degrees / image_dimension
-        # Convert pixel error to angular error
-        angle_error = pixel_error * degrees_per_pixel
-        return angle_error
 
-    def angle_to_servo_raw(self, angle_delta, axis='yaw'):
-        """
-        Convert angular change (in degrees) to servo raw units
 
-        Args:
-            angle_delta: Desired angular change in degrees
-            axis: 'yaw' or 'pitch'
-
-        Returns:
-            Servo position change in raw units
-        """
-        if axis == 'yaw':
-            # Yaw servo: 1500-3500 raw = 2000 units over yaw_range_degrees
-            raw_range = YAW_MAX - YAW_MIN
-            raw_per_degree = raw_range / self.yaw_range_degrees
-        else:  # pitch
-            # Pitch servo: 1-500 raw = full up to full down over pitch_range_degrees
-            raw_range = PITCH_MAX - PITCH_MIN
-            raw_per_degree = raw_range / self.pitch_range_degrees
-
-        # Convert angle to raw units
-        raw_delta = angle_delta * raw_per_degree
-        return int(raw_delta)
-
-    def servo_raw_to_angle(self, raw_delta, axis='yaw'):
-        """Convert servo raw-unit error to angular error in degrees."""
-        if axis == 'yaw':
-            raw_range = YAW_MAX - YAW_MIN
-            raw_per_degree = raw_range / self.yaw_range_degrees
-        else:
-            raw_range = PITCH_MAX - PITCH_MIN
-            raw_per_degree = raw_range / self.pitch_range_degrees
-
-        if raw_per_degree == 0:
-            return 0.0
-
-        return raw_delta / raw_per_degree
-
-    def target_crosshair_y_for_depth(self, depth_mm=None):
-        """Return the aiming crosshair Y used for tracking at the target depth."""
-        ch_y = get_target_crosshair_y(self.current_pitch)
-
-        if depth_mm is None:
-            return ch_y
-
-        focal_y = None
-        if self.stereo_depth.K1 is not None:
-            focal_y = float(self.stereo_depth.K1[1, 1])
-        elif self.stereo_depth.camera_matrix is not None:
-            focal_y = float(self.stereo_depth.camera_matrix[1, 1])
-
-        depth_adjust = AIMING.depth_adjust_px(depth_mm, focal_y)
-        if depth_adjust is None:
-            return ch_y
-
-        return int(round(ch_y + depth_adjust))
-
-    def pixel_to_target_position(self, target_x, target_y, depth_mm=None):
-        """
-        Convert a detected image point into the servo raw positions that would center it.
-        This is the angular/world-ish observation used by target belief tracking.
-        """
-        target_crosshair_x = get_target_crosshair_x(self.current_yaw)
-        target_crosshair_y = self.target_crosshair_y_for_depth(depth_mm)
-        pixel_offset_x = target_x - target_crosshair_x
-        pixel_offset_y = target_y - target_crosshair_y
-
-        angle_offset_yaw = self.pixels_to_angle(
-            pixel_offset_x,
-            self.image_width,
-            self.camera_fov_horizontal
-        )
-        angle_offset_pitch = self.pixels_to_angle(
-            pixel_offset_y,
-            self.image_height,
-            self.camera_fov_vertical
-        )
-
-        yaw_offset_raw = self.angle_to_servo_raw(angle_offset_yaw, axis='yaw')
-        pitch_offset_raw = int(round(
-            self.angle_to_servo_raw(angle_offset_pitch, axis='pitch') * self.pitch_tracking_scale
-        ))
-        observed_yaw = max(YAW_MIN, min(YAW_MAX, self.current_yaw + yaw_offset_raw))
-        observed_pitch = max(PITCH_MIN, min(PITCH_MAX, self.current_pitch + pitch_offset_raw))
-
-        return {
-            "yaw": observed_yaw,
-            "pitch": observed_pitch,
-            "pixel_error_x": pixel_offset_x,
-            "pixel_error_y": pixel_offset_y,
-            "angle_error_yaw": angle_offset_yaw,
-            "angle_error_pitch": angle_offset_pitch,
-            "yaw_offset_raw": yaw_offset_raw,
-            "pitch_offset_raw": pitch_offset_raw,
-        }
 
     def update_target_belief(self, center_x, center_y, confidence, depth_mm=None):
         """Update angular target belief from one detection observation."""
@@ -868,7 +743,6 @@ class CameraTracker:
         """Clear target belief and reset tracking controller state."""
         self.target_belief.clear()
         self.tracking_controller.reset()
-        self.smoothed_tracking_center = None
         print("   Target belief cleared")
         return True
 
@@ -876,20 +750,11 @@ class CameraTracker:
         """Return active angular target belief if it is fresh and confident enough."""
         return self.target_belief.get_active()
 
-    def _minimum_raw_step(self, raw_delta, raw_error):
-        if (
-            self.belief_min_step_raw <= 0
-            or abs(raw_error) <= self.belief_deadband_raw
-            or abs(raw_delta) >= self.belief_min_step_raw
-        ):
-            return raw_delta
-
-        return self.belief_min_step_raw if raw_error > 0 else -self.belief_min_step_raw
 
     def move_to_pixel(self, target_x, target_y):
         """
         Directly move servos to point the crosshair at a target pixel position.
-        Unlike observe(), this is NOT a PID controller - it's a direct positioning command.
+        This is a direct positioning command, not the belief control loop.
 
         Args:
             target_x: X coordinate of target position in pixels
@@ -910,112 +775,6 @@ class CameraTracker:
 
         return desired_yaw, desired_pitch
 
-    def observe(self, center_x, center_y):
-        """
-        PID controller that takes detected rat center point and returns updated servo coordinates.
-        Uses proper angle conversions and smooth control to center the rat in the view.
-
-        The controller:
-        1. Converts pixel error to angular error (degrees)
-        2. Applies PID control in the angular domain
-        3. Converts angular corrections to servo raw units
-        4. Smoothly moves servos without overshooting
-
-        Args:
-            center_x: X coordinate of detected rat center
-            center_y: Y coordinate of detected rat center
-
-        Returns:
-            tuple: (desired_yaw, desired_pitch) servo positions in raw units
-        """
-        # Calculate time delta for derivative and integral calculations
-        current_time = time.time()
-        dt = current_time - self.pid_last_time
-        self.pid_last_time = current_time
-
-        # Prevent division by zero or too small dt
-        if dt < 0.001:
-            dt = 0.001
-
-        # Calculate pixel error from target crosshair
-        # Use dynamic crosshair positions based on current servo angles
-        # Positive error_x means rat is to the right
-        # Positive error_y means rat is below center
-        target_crosshair_x = get_target_crosshair_x(self.current_yaw)
-        target_crosshair_y = get_target_crosshair_y(self.current_pitch)
-        pixel_error_x = center_x - target_crosshair_x
-        pixel_error_y = center_y - target_crosshair_y
-
-        # Convert pixel errors to angular errors (degrees)
-        angle_error_yaw = self.pixels_to_angle(
-            pixel_error_x,
-            self.image_width,
-            self.camera_fov_horizontal
-        )
-        angle_error_pitch = self.pixels_to_angle(
-            pixel_error_y,
-            self.image_height,
-            self.camera_fov_vertical
-        )
-
-        # ===== YAW PID CONTROL =====
-        # Proportional term
-        yaw_p = self.pid_yaw_kp * angle_error_yaw
-
-        # Integral term (accumulated error)
-        self.pid_yaw_integral += angle_error_yaw * dt
-        # Anti-windup: limit integral to prevent excessive buildup
-        max_integral = self.pid_max_integral  # degrees
-        self.pid_yaw_integral = max(-max_integral, min(max_integral, self.pid_yaw_integral))
-        yaw_i = self.pid_yaw_ki * self.pid_yaw_integral
-
-        # Derivative term (rate of change of error)
-        yaw_d = self.pid_yaw_kd * (angle_error_yaw - self.pid_yaw_prev_error) / dt
-        self.pid_yaw_prev_error = angle_error_yaw
-
-        # Calculate total yaw correction (in degrees)
-        yaw_correction_deg = yaw_p + yaw_i + yaw_d
-
-        # ===== PITCH PID CONTROL =====
-        # Proportional term
-        pitch_p = self.pid_pitch_kp * angle_error_pitch
-
-        # Integral term (accumulated error)
-        self.pid_pitch_integral += angle_error_pitch * dt
-        self.pid_pitch_integral = max(-max_integral, min(max_integral, self.pid_pitch_integral))
-        pitch_i = self.pid_pitch_ki * self.pid_pitch_integral
-
-        # Derivative term (rate of change of error)
-        pitch_d = self.pid_pitch_kd * (angle_error_pitch - self.pid_pitch_prev_error) / dt
-        self.pid_pitch_prev_error = angle_error_pitch
-
-        # Calculate total pitch correction (in degrees)
-        pitch_correction_deg = pitch_p + pitch_i + pitch_d
-
-        # ===== CONVERT ANGULAR CORRECTIONS TO SERVO RAW UNITS =====
-        yaw_correction_raw = self.angle_to_servo_raw(yaw_correction_deg, axis='yaw')
-        pitch_correction_raw = self.angle_to_servo_raw(pitch_correction_deg, axis='pitch')
-        yaw_correction_raw = self._minimum_tracking_step(yaw_correction_raw, pixel_error_x)
-        pitch_correction_raw = self._minimum_tracking_step(pitch_correction_raw, pixel_error_y)
-
-        # Calculate desired servo positions
-        desired_yaw = self.current_yaw + yaw_correction_raw
-        desired_pitch = self.current_pitch + pitch_correction_raw
-
-        # Clamp to valid servo ranges
-        desired_yaw = max(YAW_MIN, min(YAW_MAX, desired_yaw))
-        desired_pitch = max(PITCH_MIN, min(PITCH_MAX, desired_pitch))
-        desired_yaw = self._limit_tracking_step(self.current_yaw, desired_yaw, self.max_yaw_step)
-        desired_pitch = self._limit_tracking_step(self.current_pitch, desired_pitch, self.max_pitch_step)
-
-        # Debug output (optional - can be removed for production)
-        print(f"   PID Debug:")
-        print(f"     Pixel error: X={pixel_error_x:.1f}px, Y={pixel_error_y:.1f}px")
-        print(f"     Angle error: Yaw={angle_error_yaw:.2f}°, Pitch={angle_error_pitch:.2f}°")
-        print(f"     Yaw PID: P={yaw_p:.3f}, I={yaw_i:.3f}, D={yaw_d:.3f} -> {yaw_correction_deg:.3f}° ({yaw_correction_raw} raw)")
-        print(f"     Pitch PID: P={pitch_p:.3f}, I={pitch_i:.3f}, D={pitch_d:.3f} -> {pitch_correction_deg:.3f}° ({pitch_correction_raw} raw)")
-
-        return desired_yaw, desired_pitch
 
     def track_target_belief(self):
         """Move servos toward the current angular target belief."""
@@ -1150,7 +909,6 @@ class CameraTracker:
                 # if detection and not self.latest_detection and self.trigger_servo_enabled:
                 #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
             else:
-                self.smoothed_tracking_center = None
                 self.decay_target_belief()
 
             # Update detection state
