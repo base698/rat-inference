@@ -16,6 +16,7 @@ from datetime import datetime
 import uvicorn
 import numpy as np
 from ratbot.vision.yolo_inference import run_inference as yolo_run_inference, extract_detections
+from ratbot.vision.camera_source import CameraSource
 from ratbot.vision.stereo_depth import StereoDepthService
 from ratbot.robot import (
     AngularBeliefController,
@@ -43,6 +44,7 @@ except ImportError:
     print("OpenCV not available - camera features disabled")
 
 # Try importing CSI camera helper
+CSICameraCapture = None
 try:
     from ratbot.vision.csi_camera import CSICameraCapture
     CSI_HELPER_AVAILABLE = True
@@ -348,14 +350,17 @@ class CameraTracker:
         self.no_connect = no_connect
 
         # Camera and detection
-        self.enable_camera = enable_camera and CV2_AVAILABLE
-        self.camera_active = False
-        self.camera = None
-        self.camera2 = None  # Second camera for stereo
-        self.camera_id = camera_id
-        self.use_csi = use_csi
-        self.stereo_mode = stereo_mode
-        self.invert_camera = invert_camera
+        self.camera_source = CameraSource(
+            enabled=enable_camera and CV2_AVAILABLE,
+            camera_id=camera_id,
+            use_csi=use_csi,
+            stereo_mode=stereo_mode,
+            invert_camera=invert_camera,
+            video_fps=VIDEO_FPS,
+            csi_capture_factory=(
+                CSICameraCapture if CSI_HELPER_AVAILABLE else None
+            ),
+        )
         self.model = None
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
@@ -524,7 +529,7 @@ class CameraTracker:
 
         # Initialize camera if enabled
         if self.enable_camera:
-            self.init_camera()
+            self.camera_source.initialize()
 
         # Initialize YOLO model if path provided
         if self.model_path and YOLO_AVAILABLE:
@@ -642,6 +647,41 @@ class CameraTracker:
     def trigger_action_servo(self):
         self.trigger_servo.fire()
 
+    @property
+    def enable_camera(self):
+        return self.camera_source.enabled
+
+    @property
+    def camera_active(self):
+        return self.camera_source.active
+
+    @camera_active.setter
+    def camera_active(self, active):
+        self.camera_source.active = bool(active)
+
+    @property
+    def camera(self):
+        return self.camera_source.left
+
+    @property
+    def camera2(self):
+        return self.camera_source.right
+
+    @property
+    def camera_id(self):
+        return self.camera_source.camera_id
+
+    @property
+    def use_csi(self):
+        return self.camera_source.use_csi
+
+    @property
+    def stereo_mode(self):
+        return self.camera_source.stereo_mode
+
+    @property
+    def invert_camera(self):
+        return self.camera_source.invert_camera
 
 
 
@@ -651,114 +691,8 @@ class CameraTracker:
 
 
 
-    def gstreamer_pipeline(self, sensor_id=0, capture_width=1280, capture_height=720,
-                           display_width=640, display_height=480, framerate=30, flip_method=0):
-        """
-        Generate GStreamer pipeline for Jetson CSI camera
-        """
-        return (
-            f"nvarguscamerasrc sensor-id={sensor_id} ! "
-            f"video/x-raw(memory:NVMM), width=(int){capture_width}, height=(int){capture_height}, "
-            f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
-            f"nvvidconv flip-method={flip_method} ! "
-            f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
-            f"videoconvert ! "
-            f"video/x-raw, format=(string)BGR ! appsink"
-        )
 
-    def init_camera(self):
-        """Initialize camera (USB or CSI), and second camera if stereo mode"""
-        try:
-            if self.use_csi:
-                # Determine flip method based on invert_camera flag
-                flip_method = 2 if self.invert_camera else 0  # 2=rotate-180, 0=none
 
-                # Use CSI camera helper (workaround for OpenCV without GStreamer)
-                if CSI_HELPER_AVAILABLE:
-                    self.camera = CSICameraCapture(
-                        sensor_id=0,  # Left camera is sensor 0
-                        width=640,
-                        height=480,
-                        fps=VIDEO_FPS,
-                        flip_method=flip_method
-                    )
-                    self.camera.start()
-                    flip_status = "inverted" if self.invert_camera else "normal"
-                    print(f"✓ CSI Camera (left) initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
-
-                    # Initialize second camera for stereo
-                    if self.stereo_mode:
-                        self.camera2 = CSICameraCapture(
-                            sensor_id=1,  # Right camera is sensor 1
-                            width=640,
-                            height=480,
-                            fps=VIDEO_FPS,
-                            flip_method=flip_method
-                        )
-                        self.camera2.start()
-                        print(f"✓ CSI Camera (right) initialized with subprocess+GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
-                else:
-                    # Fallback to cv2.VideoCapture with GStreamer
-                    pipeline = self.gstreamer_pipeline(
-                        sensor_id=0,
-                        capture_width=1280,
-                        capture_height=720,
-                        display_width=640,
-                        display_height=480,
-                        framerate=VIDEO_FPS,
-                        flip_method=flip_method
-                    )
-                    self.camera = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                    flip_status = "inverted" if self.invert_camera else "normal"
-                    print(f"✓ CSI Camera (left) initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
-
-                    # Initialize second camera for stereo
-                    if self.stereo_mode:
-                        pipeline2 = self.gstreamer_pipeline(
-                            sensor_id=1,
-                            capture_width=1280,
-                            capture_height=720,
-                            display_width=640,
-                            display_height=480,
-                            framerate=VIDEO_FPS,
-                            flip_method=flip_method
-                        )
-                        self.camera2 = cv2.VideoCapture(pipeline2, cv2.CAP_GSTREAMER)
-                        print(f"✓ CSI Camera (right) initialized with GStreamer (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
-            else:
-                # Use regular USB camera
-                self.camera = cv2.VideoCapture(self.camera_id)
-
-                # Set format to MJPEG if available (better compatibility)
-                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                self.camera.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
-                flip_status = "inverted" if self.invert_camera else "normal"
-                print(f"✓ USB Camera (left) {self.camera_id} initialized (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
-
-                # Initialize second USB camera for stereo
-                if self.stereo_mode:
-                    self.camera2 = cv2.VideoCapture(self.camera_id + 1)
-                    self.camera2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                    self.camera2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                    self.camera2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    self.camera2.set(cv2.CAP_PROP_FPS, VIDEO_FPS)
-                    print(f"✓ USB Camera (right) {self.camera_id + 1} initialized (640x480 @ {VIDEO_FPS} FPS, {flip_status})")
-
-            if not self.camera.isOpened():
-                raise Exception("Failed to open left camera")
-
-            if self.stereo_mode and not self.camera2.isOpened():
-                raise Exception("Failed to open right camera")
-
-            self.camera_active = True
-
-        except Exception as e:
-            print(f"Failed to initialize camera: {e}")
-            self.camera_active = False
-            self.camera = None
-            self.camera2 = None
 
     def init_model(self):
         """Initialize YOLO model"""
@@ -1200,30 +1134,9 @@ class CameraTracker:
                     # Silently fail on read errors (don't spam console at 30 FPS)
                     pass
 
-            # Capture frame from left camera
-            ret, frame = self.camera.read()
-            if not ret:
+            frame, frame_right = self.camera_source.read_frames()
+            if frame is None:
                 return
-
-            # Capture frame from right camera if stereo mode
-            frame_right = None
-            if self.stereo_mode and self.camera2:
-                ret2, frame_right = self.camera2.read()
-                if not ret2:
-                    frame_right = None
-
-            # Rotate 180 degrees if invert_camera is enabled and not using CSI with flip_method
-            # (CSI camera handles rotation in GStreamer pipeline)
-            if self.invert_camera and not self.use_csi:
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-                if frame_right is not None:
-                    frame_right = cv2.rotate(frame_right, cv2.ROTATE_180)
-
-            # Resize to 640x480 if needed (camera may not respect resolution settings)
-            if frame.shape[1] != 640 or frame.shape[0] != 480:
-                frame = cv2.resize(frame, (640, 480))
-            if frame_right is not None and (frame_right.shape[1] != 640 or frame_right.shape[0] != 480):
-                frame_right = cv2.resize(frame_right, (640, 480))
 
             # Keep the displayed frame unrectified; rectification is only for depth math.
             if self.stereo_depth.calibration_enabled and not self.stereo_depth.stereo_calibration_enabled:
@@ -1253,30 +1166,9 @@ class CameraTracker:
             return
 
         try:
-            # Capture frame from left camera
-            ret, frame = self.camera.read()
-            if not ret:
+            frame, frame_right = self.camera_source.read_frames()
+            if frame is None:
                 return
-
-            # Capture frame from right camera if stereo mode
-            frame_right = None
-            if self.stereo_mode and self.camera2:
-                ret2, frame_right = self.camera2.read()
-                if not ret2:
-                    frame_right = None
-
-            # Rotate 180 degrees if invert_camera is enabled and not using CSI with flip_method
-            # (CSI camera handles rotation in GStreamer pipeline)
-            if self.invert_camera and not self.use_csi:
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-                if frame_right is not None:
-                    frame_right = cv2.rotate(frame_right, cv2.ROTATE_180)
-
-            # Resize to 640x480 if needed (camera may not respect resolution settings)
-            if frame.shape[1] != 640 or frame.shape[0] != 480:
-                frame = cv2.resize(frame, (640, 480))
-            if frame_right is not None and (frame_right.shape[1] != 640 or frame_right.shape[0] != 480):
-                frame_right = cv2.resize(frame_right, (640, 480))
 
             # Keep inference on the normal camera image; depth rectifies hidden copies only.
             if self.stereo_depth.calibration_enabled and not self.stereo_depth.stereo_calibration_enabled:
@@ -1419,12 +1311,7 @@ class CameraTracker:
 
     def disconnect(self):
         """Disconnect and cleanup"""
-        # Stop camera
-        if self.camera:
-            try:
-                self.camera.release()
-            except:
-                pass
+        self.camera_source.close()
 
         self.trigger_servo.close()
         self.tracking_servos.close()
