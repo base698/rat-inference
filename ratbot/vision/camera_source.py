@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import cv2
 
 
@@ -30,6 +32,7 @@ class CameraSource:
         self.left = None
         self.right = None
         self.active = False
+        self.capture_lock = threading.Lock()
 
     @staticmethod
     def gstreamer_pipeline(
@@ -71,9 +74,7 @@ class CameraSource:
             self.active = True
         except Exception as exc:
             print(f"Failed to initialize camera: {exc}")
-            self.active = False
-            self.left = None
-            self.right = None
+            self.close()
 
     def _initialize_csi(self):
         flip_method = 2 if self.invert_camera else 0
@@ -153,6 +154,10 @@ class CameraSource:
 
     def read_frames(self):
         """Read and normalize a left frame and optional right frame."""
+        with self.capture_lock:
+            return self._read_frames_locked()
+
+    def _read_frames_locked(self):
         if not self.active or self.left is None:
             return None, None
 
@@ -182,11 +187,14 @@ class CameraSource:
 
     def close(self):
         """Release camera handles and deactivate the source."""
-        for camera in (self.left, self.right):
-            if camera is None:
-                continue
-            try:
-                camera.release()
-            except Exception:
-                pass
-        self.active = False
+        with self.capture_lock:
+            self.active = False
+            for camera in (self.left, self.right):
+                if camera is None:
+                    continue
+                try:
+                    camera.release()
+                except Exception:
+                    pass
+            self.left = None
+            self.right = None

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 
 import cv2
@@ -31,6 +33,31 @@ class FakeCapture:
 
     def release(self):
         self.released = True
+
+
+class ReadMonitor:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.active = 0
+        self.max_active = 0
+
+
+class MonitoredCapture(FakeCapture):
+    def __init__(self, frame, monitor):
+        super().__init__(frame)
+        self.monitor = monitor
+
+    def read(self):
+        with self.monitor.lock:
+            self.monitor.active += 1
+            self.monitor.max_active = max(
+                self.monitor.max_active,
+                self.monitor.active,
+            )
+        time.sleep(0.02)
+        with self.monitor.lock:
+            self.monitor.active -= 1
+        return super().read()
 
 
 class CameraSourceTests(unittest.TestCase):
@@ -72,6 +99,7 @@ class CameraSourceTests(unittest.TestCase):
         self.assertEqual(len(captures[3].settings), 4)
 
     def test_failed_camera_open_leaves_source_inactive(self):
+        failed_capture = FakeCapture(opened=False)
         source = CameraSource(
             enabled=True,
             camera_id=0,
@@ -79,14 +107,43 @@ class CameraSourceTests(unittest.TestCase):
             stereo_mode=False,
             invert_camera=False,
             video_fps=30,
-            capture_factory=lambda camera_id, *args: FakeCapture(opened=False),
+            capture_factory=lambda camera_id, *args: failed_capture,
         )
 
         source.initialize()
 
         self.assertFalse(source.active)
+        self.assertTrue(failed_capture.released)
         self.assertIsNone(source.left)
         self.assertIsNone(source.right)
+
+    def test_complete_frame_pair_reads_are_serialized(self):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        monitor = ReadMonitor()
+        source = CameraSource(
+            enabled=True,
+            camera_id=0,
+            use_csi=False,
+            stereo_mode=False,
+            invert_camera=False,
+            video_fps=30,
+        )
+        source.left = MonitoredCapture(frame, monitor)
+        source.active = True
+        start = threading.Barrier(3)
+
+        def read_once():
+            start.wait()
+            source.read_frames()
+
+        readers = [threading.Thread(target=read_once) for _ in range(2)]
+        for reader in readers:
+            reader.start()
+        start.wait()
+        for reader in readers:
+            reader.join(timeout=1)
+
+        self.assertEqual(monitor.max_active, 1)
 
     def test_read_frames_rotates_and_resizes_usb_frames(self):
         left = np.zeros((2, 3, 3), dtype=np.uint8)
@@ -153,6 +210,8 @@ class CameraSourceTests(unittest.TestCase):
         self.assertTrue(left.released)
         self.assertTrue(right.released)
         self.assertFalse(source.active)
+        self.assertIsNone(source.left)
+        self.assertIsNone(source.right)
 
 
 if __name__ == "__main__":
