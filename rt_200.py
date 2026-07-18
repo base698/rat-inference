@@ -17,6 +17,7 @@ import uvicorn
 import numpy as np
 from ratbot.vision.yolo_inference import run_inference as yolo_run_inference, extract_detections
 from ratbot.vision.camera_source import CameraSource
+from ratbot.vision.overlay import OverlayRenderer
 from ratbot.vision.stereo_depth import StereoDepthService
 from ratbot.robot import (
     AngularBeliefController,
@@ -418,19 +419,22 @@ class CameraTracker:
             min_texture_std=tracking_config.get('depth_min_texture_std', 4.0),
             max_valid_mm=tracking_config.get('depth_max_valid_mm', 6000.0),
         )
-        self.depth_adjust_smoothing_alpha = max(
-            0.0,
-            min(1.0, float(tracking_config.get('depth_adjust_smoothing_alpha', 0.20)))
-        )
-        self.depth_adjust_missing_decay = max(
-            0.0,
-            min(1.0, float(tracking_config.get('depth_adjust_missing_decay', 0.85)))
+        self.overlay_renderer = OverlayRenderer(
+            stereo_depth=self.stereo_depth,
+            aiming=AIMING,
+            crosshair_x=get_target_crosshair_x,
+            crosshair_y=get_target_crosshair_y,
+            crosshair_size=CROSSHAIR_SIZE,
+            depth_adjust_smoothing_alpha=tracking_config.get(
+                'depth_adjust_smoothing_alpha', 0.20
+            ),
+            depth_adjust_missing_decay=tracking_config.get(
+                'depth_adjust_missing_decay', 0.85
+            ),
         )
         self.motor_readback_fps = max(0.0, float(tracking_config.get('motor_readback_fps', 10)))
         self.motor_readback_interval = 1.0 / self.motor_readback_fps if self.motor_readback_fps > 0 else 0.0
         self.last_motor_readback_time = 0.0
-        self.display_depth_adjust_px = 0.0
-        self.display_depth_adjust_initialized = False
         self.stereo_depth.last_depth_debug = "not computed"
 
         servo_bounds = ServoBounds(YAW_MIN, YAW_MAX, PITCH_MIN, PITCH_MAX)
@@ -683,6 +687,22 @@ class CameraTracker:
     def invert_camera(self):
         return self.camera_source.invert_camera
 
+    def draw_overlays(self, frame, frame_right=None):
+        """Render a consistent snapshot of detection and aiming state."""
+        with self.inference_lock:
+            bbox = self.latest_bbox
+            center_point = self.latest_center_point
+
+        return self.overlay_renderer.render(
+            frame=frame,
+            frame_right=frame_right,
+            current_yaw=self.current_yaw,
+            current_pitch=self.current_pitch,
+            stereo_mode=self.stereo_mode,
+            bbox=bbox,
+            center_point=center_point,
+        )
+
 
 
 
@@ -708,117 +728,7 @@ class CameraTracker:
 
 
 
-    def smooth_display_depth_adjust(self, target_adjust_px):
-        """Smooth the visual crosshair depth offset without affecting tracking math."""
-        if target_adjust_px is None:
-            self.display_depth_adjust_px *= self.depth_adjust_missing_decay
-            if abs(self.display_depth_adjust_px) < 0.2:
-                self.display_depth_adjust_px = 0.0
-                self.display_depth_adjust_initialized = False
-            return self.display_depth_adjust_px
 
-        target_adjust_px = float(target_adjust_px)
-        if not self.display_depth_adjust_initialized:
-            self.display_depth_adjust_px = target_adjust_px
-            self.display_depth_adjust_initialized = True
-            return self.display_depth_adjust_px
-
-        alpha = self.depth_adjust_smoothing_alpha
-        self.display_depth_adjust_px += alpha * (target_adjust_px - self.display_depth_adjust_px)
-        return self.display_depth_adjust_px
-
-    def draw_overlays(self, frame, frame_right=None):
-        """Draw crosshair, bounding box, and center point on image (OpenCV)"""
-        # Draw target crosshair (dynamic position based on yaw and pitch)
-        ch_x = get_target_crosshair_x(self.current_yaw)
-
-        # Get focal length from calibration if available
-        # Don't use geometric calculation yet - use empirical linear interpolation
-        focal_length_y = None  # Set to None to force fallback to linear interpolation
-        # if self.stereo_depth.calibration_enabled and self.stereo_depth.camera_matrix is not None:
-        #     focal_length_y = self.stereo_depth.camera_matrix[1, 1]  # fy from camera matrix
-
-        ch_y = get_target_crosshair_y(self.current_pitch,
-                                       camera_bore_offset_mm=82,
-                                       focal_length_px=focal_length_y,
-                                       assumed_distance_mm=5000)
-        ch_size = CROSSHAIR_SIZE
-
-        # Debug: print servo positions and crosshair (only every 30 frames to avoid spam)
-        if not hasattr(self, '_frame_counter'):
-            self._frame_counter = 0
-        self._frame_counter += 1
-
-        # Calculate depth at crosshair if stereo is available
-        crosshair_depth_m = None
-        depth_adjust_px = 0.0
-        depth_adjust_target_px = None
-        depth_text = None
-        depth_color = (0, 255, 0)
-        if self.stereo_depth.stereo_calibration_enabled and frame_right is not None:
-            depth_mm = self.stereo_depth.calculate_depth(frame, frame_right, ch_x, ch_y)
-            if depth_mm is not None:
-                crosshair_depth_m = depth_mm / 1000.0  # Convert to meters
-                focal_y = None
-                if self.stereo_depth.K1 is not None:
-                    focal_y = float(self.stereo_depth.K1[1, 1])
-                elif self.stereo_depth.camera_matrix is not None:
-                    focal_y = float(self.stereo_depth.camera_matrix[1, 1])
-
-                depth_adjust = AIMING.depth_adjust_px(depth_mm, focal_y)
-                if depth_adjust is not None:
-                    depth_adjust_target_px = depth_adjust
-                depth_text = f"{crosshair_depth_m:.2f}m"
-            else:
-                depth_text = f"-- {self.stereo_depth.last_depth_debug}"
-                depth_color = (0, 200, 255)
-        elif self.stereo_mode:
-            depth_text = "-- no right frame/calibration"
-            depth_color = (0, 200, 255)
-
-        depth_adjust_px = self.smooth_display_depth_adjust(depth_adjust_target_px)
-        if abs(depth_adjust_px) >= 0.2:
-            ch_y = int(round(ch_y + depth_adjust_px))
-
-        if self._frame_counter % 30 == 0:  # Print once per second
-            depth_debug = depth_text if depth_text is not None else "n/a"
-            print(f"[DEBUG] Yaw: {self.current_yaw}, Pitch: {self.current_pitch}, Crosshair: ({ch_x}, {ch_y}), Depth: {depth_debug}, DepthYAdjust: {depth_adjust_px:.1f}px")
-
-        # Crosshair lines in green (BGR format)
-        cv2.line(frame, (ch_x - ch_size, ch_y), (ch_x + ch_size, ch_y), (0, 255, 0), 2)
-        cv2.line(frame, (ch_x, ch_y - ch_size), (ch_x, ch_y + ch_size), (0, 255, 0), 2)
-        # Crosshair circle
-        cv2.circle(frame, (ch_x, ch_y), 5, (0, 255, 0), 2)
-
-        # Display distance/status at crosshair when stereo mode is active
-        if depth_text is not None:
-            # Draw text with black background for visibility
-            text_size = cv2.getTextSize(depth_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-            text_x = ch_x + ch_size + 10
-            text_y = ch_y
-            # Background rectangle
-            cv2.rectangle(frame, (text_x - 2, text_y - text_size[1] - 2),
-                         (text_x + text_size[0] + 2, text_y + 5), (0, 0, 0), -1)
-            # Text in green
-            cv2.putText(frame, depth_text, (text_x, text_y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, depth_color, 2)
-
-        # Draw bounding box and center point if detection exists
-        with self.inference_lock:
-            if self.latest_bbox is not None:
-                x1, y1, x2, y2 = self.latest_bbox
-                # Draw bounding box in red (BGR)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
-
-            if self.latest_center_point is not None:
-                cx, cy = self.latest_center_point
-                # Draw center point in blue (BGR)
-                cv2.circle(frame, (cx, cy), 8, (255, 0, 0), -1)  # Filled circle
-                cv2.circle(frame, (cx, cy), 8, (255, 255, 255), 2)  # White outline
-                # Draw line from center to target in yellow (BGR)
-                cv2.line(frame, (cx, cy), (ch_x, ch_y), (0, 255, 255), 2)
-
-        return frame
 
     def pixels_to_angle(self, pixel_error, image_dimension, fov_degrees):
         """
