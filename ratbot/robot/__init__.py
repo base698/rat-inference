@@ -6,6 +6,7 @@ from .hardware import (
     TriggerServoConfig,
     TriggerServoController,
 )
+from .observation import ObservationConfig, TrackingObservationConverter
 
 from .aiming import (
     CrosshairAiming,
@@ -22,8 +23,10 @@ __all__ = [
     "DepthCrosshairCompensation",
     "DetectionData",
     "NumericPosition",
+    "ObservationConfig",
     "PitchCompensation",
     "ServoBounds",
+    "TrackingObservationConverter",
     "TrackingServoController",
     "TrackerRobot",
     "TriggerServoConfig",
