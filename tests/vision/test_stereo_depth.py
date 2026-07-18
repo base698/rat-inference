@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from ratbot.vision.stereo_depth import StereoDepthService
+from rt_200 import CameraTracker
 
 
 class FakeMatcher:
@@ -122,6 +123,24 @@ class StereoDepthServiceTests(unittest.TestCase):
 
         self.assertIs(actual_left, left)
         self.assertIs(actual_right, right)
+
+
+class CameraTrackerStereoWiringTests(unittest.TestCase):
+    def test_runtime_calibration_status_delegates_to_stereo_service(self):
+        tracker = CameraTracker(
+            enable_servos=False,
+            no_connect=True,
+            enable_camera=False,
+        )
+
+        self.assertIs(
+            tracker.calibration_enabled,
+            tracker.stereo_depth.calibration_enabled,
+        )
+        self.assertIs(
+            tracker.stereo_calibration_enabled,
+            tracker.stereo_depth.stereo_calibration_enabled,
+        )
 
 
 if __name__ == "__main__":

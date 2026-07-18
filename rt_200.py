@@ -581,6 +581,16 @@ class CameraTracker:
 
 
 
+    @property
+    def calibration_enabled(self):
+        """Compatibility view of the extracted calibration service state."""
+        return self.stereo_depth.calibration_enabled
+
+    @property
+    def stereo_calibration_enabled(self):
+        """Compatibility view of the extracted stereo calibration state."""
+        return self.stereo_depth.stereo_calibration_enabled
+
     def init_trigger_servo(self):
         """Initialize PWM trigger servo using sysfs"""
         try:
@@ -1736,16 +1746,16 @@ def main():
         print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations}")
         print(f"Belief velocity: alpha={tracker.belief_velocity_alpha:g}, pitch_alpha={tracker.belief_pitch_velocity_alpha:g}, decay={tracker.belief_velocity_decay:g}, max={tracker.belief_max_velocity_raw_per_s:g}/{tracker.belief_max_pitch_velocity_raw_per_s:g} raw/s, predict={tracker.belief_max_prediction_age:g}s")
         print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}, motor_readback={tracker.motor_readback_fps:g} FPS")
-    calib_status = "ENABLED" if tracker.calibration_enabled else "DISABLED"
-    if tracker.calibration_enabled:
-        calib_type = "STEREO" if tracker.stereo_calibration_enabled else "SINGLE"
+    calib_status = "ENABLED" if tracker.stereo_depth.calibration_enabled else "DISABLED"
+    if tracker.stereo_depth.calibration_enabled:
+        calib_type = "STEREO" if tracker.stereo_depth.stereo_calibration_enabled else "SINGLE"
         print(f"Calibration: {calib_status} ({calib_type}, {args.calibration})")
     elif args.calibration != "camera_calibration.npz":
         # Only show warning if user explicitly specified a file
         print(f"Calibration: {calib_status} (file not found)")
 
     if args.stereo:
-        stereo_status = "ENABLED" if tracker.stereo_calibration_enabled else "DISABLED (no stereo calibration)"
+        stereo_status = "ENABLED" if tracker.stereo_depth.stereo_calibration_enabled else "DISABLED (no stereo calibration)"
         print(f"Stereo depth: {stereo_status}")
     print()
 
