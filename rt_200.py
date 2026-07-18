@@ -480,6 +480,17 @@ class CameraTracker:
             crosshair_y=get_target_crosshair_y,
         )
 
+        pid_config = CONFIG.get('pid', {}) if CONFIG else {}
+        yaw_pid_config = pid_config.get('yaw', {})
+        pitch_pid_config = pid_config.get('pitch', {})
+        self.pid_yaw_kp = float(yaw_pid_config.get('kp', 0.85))
+        self.pid_yaw_ki = float(yaw_pid_config.get('ki', 0.01))
+        self.pid_yaw_kd = float(yaw_pid_config.get('kd', 0.03))
+        self.pid_pitch_kp = float(pitch_pid_config.get('kp', 0.85))
+        self.pid_pitch_ki = float(pitch_pid_config.get('ki', 0.01))
+        self.pid_pitch_kd = float(pitch_pid_config.get('kd', 0.03))
+        self.pid_max_integral = float(pid_config.get('max_integral', 10.0))
+
         self.target_belief = AngularTargetBelief(
             update_alpha=belief_update_alpha,
             miss_decay=belief_miss_decay,

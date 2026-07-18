@@ -269,5 +269,29 @@ class AngularBeliefControllerTests(unittest.TestCase):
         self.assertEqual(controller.last_time, 3.0)
 
 
+class CameraTrackerBeliefWiringTests(unittest.TestCase):
+    def test_off_center_belief_moves_tracker_without_missing_pid_config(self):
+        from rt_200 import CameraTracker
+
+        tracker = CameraTracker(
+            enable_servos=False,
+            no_connect=True,
+            enable_camera=False,
+        )
+        initial_yaw = tracker.current_yaw
+        initial_pitch = tracker.current_pitch
+
+        with patch("ratbot.robot.belief.time.time", return_value=100.0):
+            tracker.target_belief.update(
+                initial_yaw + 100,
+                initial_pitch + 50,
+                confidence=1.0,
+            )
+            tracker.tracking_controller.track_once()
+
+        self.assertGreater(tracker.current_yaw, initial_yaw)
+        self.assertGreater(tracker.current_pitch, initial_pitch)
+
+
 if __name__ == "__main__":
     unittest.main()
