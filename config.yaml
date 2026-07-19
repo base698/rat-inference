@@ -105,6 +105,34 @@ tracking:
     belief_max_pitch_velocity_raw_per_s: 180
     belief_max_prediction_age: 0.45
 
+  # Opt-in 3D multi-target tracking in the fixed turret-base frame.
+  # Keep disabled until servo direction signs and camera-to-pivot extrinsics pass
+  # the stationary-target pan/tilt calibration described in README.md.
+  world_frame:
+    enabled: false
+    # World-frame computation is shadow-only unless both gates are true.
+    actuation_enabled: false
+    calibration_validated: false
+    gate_distance_mm: 750.0
+    confirm_hits: 3
+    max_misses: 5
+    delete_after_seconds: 1.5
+    process_acceleration_std_mm_s2: 300.0
+    min_depth_confidence: 0.20
+    aim_latency_seconds: 0.12
+    yaw_center_raw: 2200.0
+    pitch_center_raw: 250.0
+    yaw_raw_per_degree: 8.333333
+    pitch_raw_per_degree: 9.072727
+    yaw_sign: 1.0       # VERIFY: raw increase must mean physical left-positive yaw
+    pitch_sign: -1.0    # Current rig: raw increase points downward
+    camera_translation_mm: [0.0, 0.0, 0.0]  # MEASURE pivot -> camera optical center
+    camera_mount_rpy_degrees: [0.0, 0.0, 0.0]
+    log_path: null       # Optional replayable JSONL, e.g. detections/world_tracks.jsonl
+    # Mutating track-selection routes are unauthenticated; keep disabled unless
+    # the API is isolated to a trusted interface/network.
+    allow_remote_selection: false
+
   # Frame rates
   video_fps: 30        # Camera/video frame rate
   inference_fps: 20    # Inference frame rate target

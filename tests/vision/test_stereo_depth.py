@@ -17,8 +17,10 @@ from rt_200 import CameraTracker
 class FakeMatcher:
     def __init__(self, disparity_pixels: float):
         self.disparity_pixels = disparity_pixels
+        self.calls = 0
 
     def compute(self, gray_left, gray_right):
+        self.calls += 1
         return np.full(gray_left.shape, self.disparity_pixels * 16.0, dtype=np.float32)
 
 
@@ -110,6 +112,51 @@ class StereoDepthServiceTests(unittest.TestCase):
 
         self.assertIsNone(service.calculate_depth(frame, frame, 32, 32))
         self.assertEqual(service.last_depth_debug, "depth too far 0.50m")
+
+    def test_batch_depth_computes_one_disparity_map_and_returns_quality(self):
+        service = StereoDepthService(min_texture_std=0.0, max_valid_mm=0.0)
+        service.stereo_calibration_enabled = True
+        matcher = FakeMatcher(25.0)
+        service.stereo_matcher = matcher
+        service.stereo_focal_length = 100.0
+        service.baseline = 50.0
+        service.K1 = np.array(
+            [[100.0, 0.0, 32.0], [0.0, 100.0, 32.0], [0.0, 0.0, 1.0]]
+        )
+        service.D1 = np.zeros(5)
+        textured = np.indices((64, 64)).sum(axis=0).astype(np.uint8)
+        frame = np.repeat(textured[:, :, None], 3, axis=2)
+
+        measurements = service.calculate_depths(
+            frame,
+            frame,
+            [(20, 20), (40, 40)],
+        )
+
+        self.assertEqual(matcher.calls, 1)
+        self.assertEqual(len(measurements), 2)
+        self.assertTrue(all(item is not None for item in measurements))
+        self.assertTrue(all(abs(item.depth_mm - 200.0) < 1e-6 for item in measurements))
+        self.assertTrue(all(item.valid_ratio > 0.9 for item in measurements))
+        self.assertTrue(all(item.confidence > 0.9 for item in measurements))
+        self.assertTrue(all(item.covariance_camera.shape == (3, 3) for item in measurements))
+        self.assertTrue(all(np.all(np.diag(item.covariance_camera) > 0) for item in measurements))
+
+    def test_batch_depth_keeps_good_points_when_another_point_is_out_of_frame(self):
+        service = StereoDepthService(min_texture_std=0.0, max_valid_mm=0.0)
+        service.stereo_calibration_enabled = True
+        service.stereo_matcher = FakeMatcher(20.0)
+        service.stereo_focal_length = 100.0
+        service.baseline = 50.0
+        service.K1 = np.eye(3)
+        service.D1 = np.zeros(5)
+        textured = np.indices((64, 64)).sum(axis=0).astype(np.uint8)
+        frame = np.repeat(textured[:, :, None], 3, axis=2)
+
+        measurements = service.calculate_depths(frame, frame, [(32, 32), (999, 999)])
+
+        self.assertIsNotNone(measurements[0])
+        self.assertIsNone(measurements[1])
 
     def test_rectification_failure_returns_original_frames(self):
         service = StereoDepthService()

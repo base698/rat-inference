@@ -79,6 +79,28 @@ class OverlayRendererTests(unittest.TestCase):
         self.assertTrue(np.any(frame[20:71, 10:51]))
         self.assertTrue(np.any(frame[110:131, 90:111]))
 
+    def test_render_draws_multiple_track_ids_and_selected_marker(self):
+        renderer = self.make_renderer()
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+
+        renderer.render(
+            frame,
+            frame_right=None,
+            current_yaw=2000,
+            current_pitch=250,
+            stereo_mode=False,
+            bbox=None,
+            center_point=None,
+            tracks=[
+                {"id": 4, "bbox": (10, 30, 50, 80), "selected": False, "status": "confirmed"},
+                {"id": 9, "bbox": (80, 40, 130, 100), "selected": True, "status": "confirmed"},
+            ],
+        )
+
+        self.assertTrue(np.any(frame[30:81, 10:51]))
+        self.assertTrue(np.any(frame[40:101, 80:131]))
+        self.assertGreater(int(frame[:, :, 2].sum()), 0)
+
     def test_render_uses_depth_and_focal_length_to_shift_crosshair(self):
         stereo = FakeStereoDepth(depth_mm=1000.0, enabled=True)
         aiming = FakeAiming(depth_adjust=12.0)

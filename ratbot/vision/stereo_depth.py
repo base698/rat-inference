@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 import os
+import math
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+
+@dataclass(frozen=True)
+class StereoPointMeasurement:
+    """Depth and quality for one point from a shared stereo disparity pass."""
+
+    depth_mm: float
+    disparity_px: float
+    valid_ratio: float
+    disparity_iqr_px: float
+    texture_std: float
+    confidence: float
+    point_camera_mm: np.ndarray
+    covariance_camera: np.ndarray
 
 
 class StereoDepthService:
@@ -235,86 +251,140 @@ class StereoDepthService:
             print(f"Error undistorting frame: {e}")
             return frame
 
-    def calculate_depth(self, frame_left, frame_right, x, y):
-        """
-        Calculate depth at a specific pixel location using stereo matching
+    def _sample_depth_measurement(self, gray_left, disparity, x, y):
+        """Sample one rectified point from an already-computed disparity map."""
+        if x < 0 or x >= disparity.shape[1] or y < 0 or y >= disparity.shape[0]:
+            self.last_depth_debug = f"rectified point out of frame ({x}, {y})"
+            return None
 
-        Args:
-            frame_left: Left camera frame (undistorted)
-            frame_right: Right camera frame (undistorted)
-            x: X coordinate in image
-            y: Y coordinate in image
+        texture_radius = 16
+        tx1 = max(0, x - texture_radius)
+        tx2 = min(gray_left.shape[1], x + texture_radius + 1)
+        ty1 = max(0, y - texture_radius)
+        ty2 = min(gray_left.shape[0], y + texture_radius + 1)
+        texture_std = float(np.std(gray_left[ty1:ty2, tx1:tx2]))
+        if texture_std < self.depth_min_texture_std:
+            self.last_depth_debug = f"low texture {texture_std:.1f}"
+            return None
 
-        Returns:
-            Depth in millimeters, or None if calculation fails
-        """
+        valid = None
+        window_size = 0
+        for radius in (4, 8, 16, 32):
+            x1 = max(0, x - radius)
+            x2 = min(disparity.shape[1], x + radius + 1)
+            y1 = max(0, y - radius)
+            y2 = min(disparity.shape[0], y + radius + 1)
+            window = disparity[y1:y2, x1:x2]
+            window_size = int(window.size)
+            if self.stereo_disparity_sign < 0:
+                candidate = window[
+                    (window < -1) & (window >= self.stereo_min_disparity)
+                ]
+            else:
+                candidate = window[window > 0]
+            if candidate.size >= 8:
+                valid = np.abs(candidate.astype(float))
+                break
+
+        if valid is None:
+            self.last_depth_debug = f"no valid disparity near ({x}, {y})"
+            return None
+
+        disparity_px = float(np.median(valid))
+        if disparity_px <= 0:
+            self.last_depth_debug = f"invalid disparity {disparity_px:.2f}px"
+            return None
+
+        focal_length = float(self.stereo_focal_length or self.K1[0, 0])
+        depth_mm = (focal_length * float(self.baseline)) / disparity_px
+        if self.depth_max_valid_mm > 0 and depth_mm > self.depth_max_valid_mm:
+            self.last_depth_debug = f"depth too far {depth_mm / 1000.0:.2f}m"
+            return None
+
+        q25, q75 = np.percentile(valid, [25, 75])
+        disparity_iqr = float(q75 - q25)
+        valid_ratio = float(valid.size / max(1, window_size))
+        texture_quality = 1.0
+        if self.depth_min_texture_std > 0:
+            texture_quality = min(
+                1.0,
+                texture_std / (2.0 * self.depth_min_texture_std),
+            )
+        spread_quality = math.exp(-disparity_iqr / max(disparity_px, 1.0))
+        confidence = max(
+            0.0,
+            min(1.0, valid_ratio * texture_quality * spread_quality),
+        )
+
+        intrinsics = self.P1[:, :3] if self.P1 is not None else self.K1
+        fx = float(intrinsics[0, 0])
+        fy = float(intrinsics[1, 1])
+        cx = float(intrinsics[0, 2])
+        cy = float(intrinsics[1, 2])
+        point_camera = np.array(
+            [
+                (x - cx) * depth_mm / fx,
+                (y - cy) * depth_mm / fy,
+                depth_mm,
+            ],
+            dtype=float,
+        )
+        disparity_sigma = max(0.5, disparity_iqr / 1.349)
+        depth_sigma = max(
+            5.0,
+            focal_length * float(self.baseline) * disparity_sigma
+            / (disparity_px ** 2),
+        )
+        lateral_sigma_x = max(3.0, depth_mm * 1.5 / fx)
+        lateral_sigma_y = max(3.0, depth_mm * 1.5 / fy)
+        covariance_camera = np.diag(
+            [lateral_sigma_x ** 2, lateral_sigma_y ** 2, depth_sigma ** 2]
+        )
+        self.last_depth_debug = f"disp {disparity_px:.2f}px"
+        return StereoPointMeasurement(
+            depth_mm=depth_mm,
+            disparity_px=disparity_px,
+            valid_ratio=valid_ratio,
+            disparity_iqr_px=disparity_iqr,
+            texture_std=texture_std,
+            confidence=confidence,
+            point_camera_mm=point_camera,
+            covariance_camera=covariance_camera,
+        )
+
+    def calculate_depths(self, frame_left, frame_right, points):
+        """Calculate many point depths with one rectification/disparity pass."""
+        points = list(points)
         if not self.stereo_calibration_enabled or self.stereo_matcher is None:
             self.last_depth_debug = "stereo disabled"
-            return None
+            return [None for _ in points]
+        if not points:
+            return []
 
         try:
-            frame_left, frame_right = self.rectify_stereo_frames(frame_left, frame_right)
-            x, y = self.rectify_stereo_point(x, y)
+            rectified_left, rectified_right = self.rectify_stereo_frames(
+                frame_left, frame_right
+            )
+            gray_left = cv2.cvtColor(rectified_left, cv2.COLOR_BGR2GRAY)
+            gray_right = cv2.cvtColor(rectified_right, cv2.COLOR_BGR2GRAY)
+            disparity = (
+                self.stereo_matcher.compute(gray_left, gray_right).astype(np.float32)
+                / 16.0
+            )
+            measurements = []
+            for raw_x, raw_y in points:
+                x, y = self.rectify_stereo_point(raw_x, raw_y)
+                measurements.append(
+                    self._sample_depth_measurement(gray_left, disparity, x, y)
+                )
+            return measurements
+        except Exception as exc:
+            self.last_depth_debug = f"error: {exc}"
+            print(f"Error calculating depth: {exc}")
+            return [None for _ in points]
 
-            # Convert to grayscale for stereo matching
-            gray_left = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY)
-            gray_right = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY)
-
-            # Compute disparity map
-            disparity = self.stereo_matcher.compute(gray_left, gray_right).astype(np.float32) / 16.0
-
-            if x < 0 or x >= disparity.shape[1] or y < 0 or y >= disparity.shape[0]:
-                self.last_depth_debug = f"rectified point out of frame ({x}, {y})"
-                return None
-
-            texture_radius = 16
-            tx1 = max(0, x - texture_radius)
-            tx2 = min(gray_left.shape[1], x + texture_radius + 1)
-            ty1 = max(0, y - texture_radius)
-            ty2 = min(gray_left.shape[0], y + texture_radius + 1)
-            texture_std = float(np.std(gray_left[ty1:ty2, tx1:tx2]))
-            if texture_std < self.depth_min_texture_std:
-                self.last_depth_debug = f"low texture {texture_std:.1f}"
-                return None
-
-            # Use the median of valid disparities around the point to reduce pixel noise.
-            d = None
-            for radius in (4, 8, 16, 32):
-                x1 = max(0, x - radius)
-                x2 = min(disparity.shape[1], x + radius + 1)
-                y1 = max(0, y - radius)
-                y2 = min(disparity.shape[0], y + radius + 1)
-                window = disparity[y1:y2, x1:x2]
-                if self.stereo_disparity_sign < 0:
-                    valid = window[(window < -1) & (window >= self.stereo_min_disparity)]
-                else:
-                    valid = window[window > 0]
-                if valid.size >= 8:
-                    d = abs(float(np.median(valid)))
-                    break
-
-            if d is None:
-                self.last_depth_debug = f"no valid disparity near ({x}, {y})"
-                return None
-
-            # Check if disparity is valid (not zero or negative)
-            if d <= 0:
-                self.last_depth_debug = f"invalid disparity {d:.2f}px"
-                return None
-
-            # Calculate depth using formula: depth = (focal_length * baseline) / disparity
-            # focal_length is in pixels, baseline is in mm
-            focal_length = self.stereo_focal_length or self.K1[0, 0]
-            depth_mm = (focal_length * self.baseline) / d
-            if self.depth_max_valid_mm > 0 and depth_mm > self.depth_max_valid_mm:
-                self.last_depth_debug = f"depth too far {depth_mm / 1000.0:.2f}m"
-                return None
-
-            self.last_depth_debug = f"disp {d:.2f}px"
-
-            return depth_mm
-
-        except Exception as e:
-            self.last_depth_debug = f"error: {e}"
-            print(f"Error calculating depth: {e}")
-            return None
+    def calculate_depth(self, frame_left, frame_right, x, y):
+        """Compatibility wrapper returning only depth for one image point."""
+        measurements = self.calculate_depths(frame_left, frame_right, [(x, y)])
+        measurement = measurements[0] if measurements else None
+        return measurement.depth_mm if measurement is not None else None

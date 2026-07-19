@@ -38,5 +38,14 @@ class TrackerRobot(Protocol):
     def clear_target_belief(self) -> bool:
         """Clear any active target belief used by autonomous tracking."""
 
+    def get_world_tracks(self) -> list[dict[str, object]]:
+        """Return snapshots of all fixed-frame tracks."""
+
+    def select_world_target(self, target_id: int) -> bool:
+        """Select a stable fixed-frame target ID, returning false if absent."""
+
+    def clear_world_selection(self) -> bool:
+        """Clear fixed-frame target selection without deleting tracks."""
+
     def move_to_pixel(self, x: NumericPosition, y: NumericPosition) -> Tuple[int, int]:
         """Convert an image-space target into desired yaw and pitch positions."""

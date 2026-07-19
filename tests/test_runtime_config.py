@@ -83,6 +83,7 @@ EXPECTED_HELP = {
     "calibration": "Path to camera calibration file (.npz, default: camera_calibration.npz)",
     "stereo": "Enable stereo mode for depth estimation (requires stereo calibration)",
     "baseline_override": "Override stereo baseline in mm (use if calibration baseline is incorrect)",
+    "world_tracking": "Enable opt-in multi-target tracking in the fixed turret-base 3D frame",
     "enable_trigger": "Enable GPIO trigger servo",
     "api_host": "Host for FastAPI server",
     "api_port": "Port for FastAPI server",
@@ -160,6 +161,67 @@ class RuntimeConfigTests(unittest.TestCase):
 
         self.assertTrue(runtime.tracker.stereo_mode)
         self.assertEqual(runtime.tracker.calibration_file, expected)
+
+    def test_world_tracking_is_opt_in_and_passes_calibration_defaults(self):
+        disabled = self.parse().tracker
+        enabled = self.parse(["--world-tracking"]).tracker
+
+        self.assertFalse(disabled.world_tracking)
+        self.assertTrue(enabled.world_tracking)
+        self.assertTrue(enabled.stereo_mode)
+        self.assertEqual(enabled.world_gate_distance_mm, 750.0)
+        self.assertEqual(enabled.world_camera_translation_mm, (0.0, 0.0, 0.0))
+        self.assertEqual(enabled.world_camera_mount_rpy_degrees, (0.0, 0.0, 0.0))
+        self.assertEqual(enabled.world_pitch_sign, -1.0)
+        self.assertFalse(enabled.world_api_selection_enabled)
+        self.assertFalse(enabled.world_actuation_enabled)
+        self.assertFalse(enabled.world_calibration_validated)
+
+    def test_world_safety_booleans_reject_string_values_fail_closed(self):
+        for key in (
+            "enabled",
+            "actuation_enabled",
+            "calibration_validated",
+            "allow_remote_selection",
+        ):
+            for invalid in ("false", "no", "0", 0, None, []):
+                with self.subTest(key=key, invalid=invalid):
+                    raw = {
+                        "tracking": {
+                            "world_frame": {key: invalid},
+                        }
+                    }
+                    with self.assertRaisesRegex(ValueError, key):
+                        parse_runtime_config(
+                            argv=[],
+                            raw_config=raw,
+                            inference_fps_default=20,
+                            path_exists=lambda path: False,
+                        )
+
+    def test_world_safety_booleans_accept_actual_yaml_booleans(self):
+        raw = {
+            "tracking": {
+                "world_frame": {
+                    "enabled": True,
+                    "actuation_enabled": True,
+                    "calibration_validated": True,
+                    "allow_remote_selection": True,
+                }
+            }
+        }
+
+        tracker = parse_runtime_config(
+            argv=[],
+            raw_config=raw,
+            inference_fps_default=20,
+            path_exists=lambda path: False,
+        ).tracker
+
+        self.assertTrue(tracker.world_tracking)
+        self.assertTrue(tracker.world_actuation_enabled)
+        self.assertTrue(tracker.world_calibration_validated)
+        self.assertTrue(tracker.world_api_selection_enabled)
 
     def test_tracker_kwargs_exclude_display_only_runtime_fields(self):
         runtime = self.parse(["--enable-camera", "--disable-detection"])

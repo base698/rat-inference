@@ -313,6 +313,116 @@ Current effective baseline override: 51.1mm
 
 Stereo RMS is usable for testing but still high; a rigid printed target and more varied poses should improve it.
 
+## Stable Multi-Target World-Frame Tracking (Opt-In)
+
+`--world-tracking` enables the new 3D tracker in **shadow mode**. It projects every
+YOLO detection with valid stereo depth into a fixed frame attached to the turret
+base, predicts independent constant-velocity Kalman tracks, and preserves stable
+IDs through short occlusions. Shadow mode computes, overlays, exposes, and logs
+tracks but does not connect them to servo actuation.
+
+```bash
+python3 rt_200.py --enable-camera --stereo --world-tracking
+```
+
+This mode is deliberately **disabled by default**, and world-frame actuation has
+an additional fail-closed gate. It is enabled only when both of these values are
+set after completing the hardware acceptance procedure:
+
+```yaml
+tracking:
+  world_frame:
+    enabled: true
+    actuation_enabled: true
+    calibration_validated: true
+```
+
+All `tracking.world_frame` Boolean switches—including these two and
+`enabled`/`allow_remote_selection`—must be real YAML booleans (`true`/`false`,
+without quotes). String, number, null, and collection values are rejected instead
+of being coerced. The existing angular tracker remains the default when world
+tracking is disabled.
+When world actuation is enabled, the tracker starts with no selected target and
+requires an explicit stable-ID selection before the controller can move.
+
+### Coordinate Convention
+
+- OpenCV camera frame: `+X` right, `+Y` down, `+Z` forward.
+- Turret-base frame: `+x` forward at neutral, `+y` left, `+z` up.
+- Positive yaw turns left; positive pitch points up.
+- The frame is fixed only while the physical turret base is stationary. It is
+  not a global/map frame and must be reset if the base is moved.
+
+### Required Hardware Calibration
+
+Before enabling servo motion with world tracking:
+
+1. Confirm `tracking.world_frame.yaw_center_raw` and `pitch_center_raw` put the
+   optical axis at the chosen neutral pose.
+2. Confirm a raw yaw increase turns the optical axis left. If not, set
+   `yaw_sign: -1.0`.
+3. Confirm a raw pitch increase points down. If not, set `pitch_sign: 1.0`.
+4. Measure raw-units-per-degree over several commanded angles and replace
+   `yaw_raw_per_degree` and `pitch_raw_per_degree`.
+5. Measure the vector from the yaw/pitch pivot to the left camera optical center
+   in neutral turret coordinates and set `camera_translation_mm`.
+6. Measure residual camera roll/pitch/yaw mounting error and set
+   `camera_mount_rpy_degrees`.
+7. Put one stationary target at a surveyed position. Pan and tilt without moving
+   the base. Its reported `(x, y, z)` should remain stable. Do not enable
+   autonomous motion until this passes.
+
+The stereo calibration file is the source of truth for focal length and
+baseline. Do not copy a baseline from notes: project records have referenced
+both 51.1 mm and 57.5 mm rigs. Use `--baseline-override` only after measuring the
+physical camera pair used in that run.
+
+### Track API
+
+- `GET /tracks` — list track ID, position, velocity, covariance, lifecycle,
+  confidence, selection, and last bounding box.
+- `POST /tracks/select` with `{"track_id": 3}` — explicitly select an ID.
+- `POST /tracks/clear-selection` — stop autonomous aiming without deleting
+  current tracks.
+- `POST /clear-belief` — clear both legacy angular belief and all world tracks.
+
+The two track-selection mutation routes are denied with `403` unless
+`tracking.world_frame.allow_remote_selection: true`. They are unauthenticated,
+so enable that option only when the API is bound to or firewalled within a trusted
+interface/network. Track IDs must be JSON integers; booleans, strings, and
+fractional numbers are rejected.
+
+The `/status` payload also includes `world_tracking`, `selected_track_id`,
+`tracks`, and per-frame association diagnostics. Set
+`tracking.world_frame.log_path` to append replayable `ratbot.world_tracks.v1`
+JSONL records containing pose, detections, assignments, selection, track state,
+and covariance. Logging is off by default.
+
+### Current Scope and Deferred Work
+
+Implemented: batched disparity (one map per frame), per-point quality and
+covariance, camera-to-base transforms, fixed-frame Kalman tracks,
+maximum-cardinality/minimum-distance gated one-to-one association, lifecycle
+management, explicit target selection, extrinsic-aware latency-compensated aim,
+fail-closed shadow/actuation gates, bounded servo control, API status, and
+structured snapshots.
+
+Deferred deliberately:
+
+- Optimized Hungarian/Jonker-Volgenant association and appearance embeddings for
+  dense scenes. The current exact dynamic-programming assignment prioritizes
+  cardinality then distance and is intended for a small number of physical targets.
+- Spherical occupancy grids and information-gain scanning. A dense fixed
+  occupancy volume is not useful until the tracking frame and base-motion model
+  are proven on hardware.
+- True capture/exposure timestamps and interpolated servo pose. The current
+  implementation snapshots `time.monotonic()` immediately after acquisition and
+  synchronously reads servo `Present_Position`; connected readback failures skip
+  the world update rather than substituting a commanded goal. Hardware exposure
+  timestamps plus timestamped pose-history interpolation remain the next upgrade.
+- Global/world mapping while the robot base moves. That requires base odometry
+  or SLAM and a new transform layer.
+
 ## Project Structure
 
 ```

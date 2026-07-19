@@ -6,6 +6,7 @@ Includes Raspberry Pi camera streaming, YOLO inference, and GPIO trigger servo
 """
 
 import os
+import json
 import time
 import threading
 import io
@@ -19,6 +20,14 @@ from ratbot.vision.camera_source import CameraSource
 from ratbot.vision.overlay import OverlayRenderer
 from ratbot.vision.stereo_depth import StereoDepthService
 from ratbot.runtime_config import parse_runtime_config
+from ratbot.tracking import (
+    Detection3D,
+    MultiTargetTracker,
+    ServoKinematicsConfig,
+    TrackManagerConfig,
+    TurretFrameTransformer,
+    WorldTrackBeliefAdapter,
+)
 from ratbot.robot import (
     AngularBeliefController,
     AngularTargetBelief,
@@ -304,7 +313,23 @@ class CameraTracker:
                  belief_reseed_match_distance_raw=120,
                  belief_reseed_max_interval=0.8, belief_pitch_update_alpha=None,
                  belief_pitch_velocity_alpha=None,
-                 belief_max_pitch_velocity_raw_per_s=None):
+                 belief_max_pitch_velocity_raw_per_s=None,
+                 world_tracking=False, world_gate_distance_mm=750.0,
+                 world_confirm_hits=3, world_max_misses=5,
+                 world_delete_after_seconds=1.5,
+                 world_process_acceleration_std_mm_s2=300.0,
+                 world_min_depth_confidence=0.2,
+                 world_aim_latency_seconds=0.12,
+                 world_yaw_center_raw=None, world_pitch_center_raw=None,
+                 world_yaw_raw_per_degree=None,
+                 world_pitch_raw_per_degree=None,
+                 world_yaw_sign=1.0, world_pitch_sign=-1.0,
+                 world_camera_translation_mm=(0.0, 0.0, 0.0),
+                 world_camera_mount_rpy_degrees=(0.0, 0.0, 0.0),
+                 world_log_path=None,
+                 world_api_selection_enabled=False,
+                 world_actuation_enabled=False,
+                 world_calibration_validated=False):
         """
         Initialize the camera tracker
 
@@ -400,6 +425,23 @@ class CameraTracker:
             self.belief_max_velocity_raw_per_s if belief_max_pitch_velocity_raw_per_s is None
             else max(0.0, float(belief_max_pitch_velocity_raw_per_s))
         )
+        self.world_tracking = bool(world_tracking)
+        self.world_calibration_validated = bool(world_calibration_validated)
+        if world_actuation_enabled and not self.world_tracking:
+            raise ValueError("world actuation requires world tracking")
+        if world_actuation_enabled and not self.world_calibration_validated:
+            raise ValueError(
+                "world actuation requires explicit calibration validation"
+            )
+        self.world_actuation_enabled = bool(world_actuation_enabled)
+        self.world_min_depth_confidence = max(
+            0.0, min(1.0, float(world_min_depth_confidence))
+        )
+        self.world_aim_latency_seconds = max(0.0, float(world_aim_latency_seconds))
+        self.world_log_path = str(world_log_path) if world_log_path else None
+        self.world_api_selection_enabled = bool(world_api_selection_enabled)
+        self.latest_tracks = []
+        self.latest_track_assignments = []
         self.detection_count = 0
         self.latest_frame = None
         self.latest_detection = False
@@ -508,9 +550,59 @@ class CameraTracker:
             pitch_velocity_alpha=self.belief_pitch_velocity_alpha,
             max_pitch_velocity_raw_per_s=self.belief_max_pitch_velocity_raw_per_s,
         )
+        self.world_transformer = TurretFrameTransformer(
+            ServoKinematicsConfig(
+                yaw_center_raw=(YAW_CENTER if world_yaw_center_raw is None else world_yaw_center_raw),
+                pitch_center_raw=(PITCH_CENTER if world_pitch_center_raw is None else world_pitch_center_raw),
+                yaw_raw_per_degree=(
+                    (YAW_MAX - YAW_MIN) / 180.0
+                    if world_yaw_raw_per_degree is None
+                    else world_yaw_raw_per_degree
+                ),
+                pitch_raw_per_degree=(
+                    (PITCH_MAX - PITCH_MIN) / 55.0
+                    if world_pitch_raw_per_degree is None
+                    else world_pitch_raw_per_degree
+                ),
+                yaw_sign=float(world_yaw_sign),
+                pitch_sign=float(world_pitch_sign),
+                camera_translation_mm=tuple(world_camera_translation_mm),
+                camera_mount_rpy_degrees=tuple(world_camera_mount_rpy_degrees),
+                yaw_min_raw=YAW_MIN,
+                yaw_max_raw=YAW_MAX,
+                pitch_min_raw=PITCH_MIN,
+                pitch_max_raw=PITCH_MAX,
+            )
+        )
+        self.world_tracker = MultiTargetTracker(
+            TrackManagerConfig(
+                gate_distance_mm=float(world_gate_distance_mm),
+                confirm_hits=int(world_confirm_hits),
+                max_misses=int(world_max_misses),
+                delete_after_seconds=float(world_delete_after_seconds),
+                process_acceleration_std_mm_s2=float(
+                    world_process_acceleration_std_mm_s2
+                ),
+                # Shadow mode may auto-select for observability. Physical actuation
+                # always starts unselected and requires an explicit target choice.
+                auto_select=not self.world_actuation_enabled,
+            )
+        )
+        self.world_belief = WorldTrackBeliefAdapter(
+            self.world_tracker,
+            self.world_transformer,
+            aim_latency_seconds=self.world_aim_latency_seconds,
+            min_confidence=belief_min_confidence,
+            max_age_seconds=belief_max_age,
+        )
+        controller_belief = (
+            self.world_belief
+            if self.world_tracking and self.world_actuation_enabled
+            else self.target_belief
+        )
         self.tracking_controller = AngularBeliefController(
             robot=self,
-            belief=self.target_belief,
+            belief=controller_belief,
             bounds=servo_bounds,
             control_fps=tracking_control_fps,
             max_yaw_step=self.max_yaw_step,
@@ -661,6 +753,7 @@ class CameraTracker:
         with self.inference_lock:
             bbox = self.latest_bbox
             center_point = self.latest_center_point
+            tracks = list(self.latest_tracks) if self.world_tracking else []
 
         return self.overlay_renderer.render(
             frame=frame,
@@ -670,6 +763,7 @@ class CameraTracker:
             stereo_mode=self.stereo_mode,
             bbox=bbox,
             center_point=center_point,
+            tracks=tracks,
         )
 
     def angle_to_servo_raw(self, angle_delta, axis='yaw'):
@@ -719,6 +813,139 @@ class CameraTracker:
 
 
 
+    def update_world_tracks(
+        self,
+        detections,
+        stereo_measurements,
+        *,
+        timestamp,
+        yaw_raw,
+        pitch_raw,
+    ):
+        """Transform valid stereo detections and update stable base-frame tracks."""
+        measurements_3d = []
+        measurement_records = []
+        for detection, stereo in zip(detections, stereo_measurements):
+            if stereo is None or stereo.confidence < self.world_min_depth_confidence:
+                continue
+            position_base = self.world_transformer.camera_to_base(
+                stereo.point_camera_mm,
+                yaw_raw,
+                pitch_raw,
+            )
+            covariance_base = self.world_transformer.camera_covariance_to_base(
+                stereo.covariance_camera,
+                yaw_raw,
+                pitch_raw,
+            )
+            measurements_3d.append(
+                Detection3D(
+                    position_base_mm=position_base,
+                    covariance_base=covariance_base,
+                    confidence=max(
+                        0.0,
+                        min(1.0, float(detection["confidence"]) * stereo.confidence),
+                    ),
+                    classification=detection.get("class_name"),
+                    measurement_time=float(timestamp),
+                    bbox=detection.get("bbox"),
+                    center=detection.get("center"),
+                    depth_mm=stereo.depth_mm,
+                    depth_confidence=stereo.confidence,
+                )
+            )
+            measurement_records.append(
+                {
+                    "center": list(detection.get("center")) if detection.get("center") is not None else None,
+                    "bbox": list(detection.get("bbox")) if detection.get("bbox") is not None else None,
+                    "class": detection.get("class_name"),
+                    "detection_confidence": float(detection["confidence"]),
+                    "depth_confidence": stereo.confidence,
+                    "camera_point_mm": stereo.point_camera_mm.tolist(),
+                    "base_point_mm": position_base.tolist(),
+                    "base_covariance": covariance_base.tolist(),
+                    "depth_mm": stereo.depth_mm,
+                    "disparity_px": stereo.disparity_px,
+                    "disparity_iqr_px": stereo.disparity_iqr_px,
+                    "valid_ratio": stereo.valid_ratio,
+                }
+            )
+
+        tracks = self.world_tracker.update(measurements_3d, float(timestamp))
+        selected = self.world_tracker.get_selected_track(timestamp=float(timestamp))
+        with self.inference_lock:
+            self.latest_tracks = tracks
+            self.latest_track_assignments = list(self.world_tracker.last_assignments)
+            if selected is not None:
+                self.latest_bbox = selected.bbox
+                self.latest_center_point = selected.center
+        if self.world_log_path:
+            self._log_world_update(
+                timestamp=float(timestamp),
+                measurement_count=len(measurements_3d),
+                detection_count=len(detections),
+                yaw_raw=yaw_raw,
+                pitch_raw=pitch_raw,
+                tracks=tracks,
+                measurement_records=measurement_records,
+            )
+        print(
+            "   World tracks: "
+            f"valid_3d={len(measurements_3d)}/{len(detections)}, "
+            f"tracks={len(tracks)}, selected={self.world_tracker.selected_track_id}"
+        )
+        return tracks
+
+    def _log_world_update(
+        self,
+        *,
+        timestamp,
+        measurement_count,
+        detection_count,
+        yaw_raw,
+        pitch_raw,
+        tracks,
+        measurement_records,
+    ):
+        """Append one replayable JSONL update when configured."""
+        predicted = self.world_tracker.get_selected_track(
+            timestamp=timestamp,
+            prediction_horizon=self.world_aim_latency_seconds,
+        )
+        predicted_aim = None
+        if predicted is not None:
+            predicted_aim = self.world_transformer.base_position_to_servo_raw(
+                predicted.position
+            )
+        record = {
+            "schema": "ratbot.world_tracks.v1",
+            "recorded_at": datetime.now().astimezone().isoformat(),
+            "monotonic_time": timestamp,
+            "control_monotonic_time": time.monotonic(),
+            "pose_raw": {"yaw": yaw_raw, "pitch": pitch_raw},
+            "commanded_pose_raw": {
+                "yaw": self.current_yaw,
+                "pitch": self.current_pitch,
+            },
+            "detection_count": detection_count,
+            "valid_3d_measurement_count": measurement_count,
+            "measurements": measurement_records,
+            "selected_track_id": self.world_tracker.selected_track_id,
+            "predicted_aim": predicted_aim,
+            "assignments": list(self.world_tracker.last_assignments),
+            "tracks": [track.to_dict() for track in tracks],
+        }
+        log_path = self.world_log_path
+        if not log_path:
+            return
+        try:
+            parent = os.path.dirname(os.path.abspath(log_path))
+            os.makedirs(parent, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(record, separators=(",", ":")) + "\n")
+        except OSError as exc:
+            print(f"World-track log error: {exc}")
+
     def update_target_belief(self, center_x, center_y, confidence, depth_mm=None):
         """Update angular target belief from one detection observation."""
         observation = self.pixel_to_target_position(center_x, center_y, depth_mm=depth_mm)
@@ -740,14 +967,29 @@ class CameraTracker:
         self.target_belief.decay()
 
     def clear_target_belief(self):
-        """Clear target belief and reset tracking controller state."""
+        """Clear autonomous target state and reset tracking controller state."""
         self.target_belief.clear()
+        self.world_tracker.clear()
+        self.latest_tracks = []
+        self.latest_track_assignments = []
         self.tracking_controller.reset()
-        print("   Target belief cleared")
+        print("   Target tracking state cleared")
+        return True
+
+    def get_world_tracks(self):
+        return [track.to_dict() for track in self.world_tracker.get_tracks()]
+
+    def select_world_target(self, target_id):
+        return self.world_tracker.select_target(int(target_id))
+
+    def clear_world_selection(self):
+        self.world_tracker.clear_selection()
         return True
 
     def get_active_target_belief(self):
-        """Return active angular target belief if it is fresh and confident enough."""
+        """Return the active belief for the configured tracking mode."""
+        if self.world_tracking:
+            return self.world_belief.get_active()
         return self.target_belief.get_active()
 
 
@@ -829,6 +1071,17 @@ class CameraTracker:
         except Exception as e:
             print(f"Video frame capture error: {e}")
 
+    def capture_world_measurement_context(self):
+        """Snapshot acquisition time with synchronous measured servo readback.
+
+        Cameras currently expose no hardware exposure timestamp. This samples the
+        monotonic clock immediately after frame acquisition, then obtains actual
+        Present_Position values instead of reusing commanded servo goals.
+        """
+        measurement_time = time.monotonic()
+        pose_yaw, pose_pitch = self.tracking_servos.read_measured_positions()
+        return measurement_time, int(pose_yaw), int(pose_pitch)
+
     def run_inference(self):
         """Run one inference pass using the shared inference module"""
         if not self.camera_active or not self.camera or not self.model:
@@ -838,6 +1091,14 @@ class CameraTracker:
             frame, frame_right = self.camera_source.read_frames()
             if frame is None:
                 return
+            # CameraSource does not yet expose hardware exposure timestamps.
+            # Snapshot monotonic acquisition time with synchronous Present_Position
+            # readback; commanded servo goals are not valid transform poses.
+            measurement_time, pose_yaw, pose_pitch = (
+                self.capture_world_measurement_context()
+                if self.world_tracking
+                else (time.monotonic(), self.current_yaw, self.current_pitch)
+            )
 
             # Keep inference on the normal camera image; depth rectifies hidden copies only.
             if self.stereo_depth.calibration_enabled and not self.stereo_depth.stereo_calibration_enabled:
@@ -860,6 +1121,26 @@ class CameraTracker:
             else:
                 detections = extract_detections(results, self.model)
             detections.sort(key=lambda det: det["confidence"], reverse=True)
+            stereo_measurements = [None] * len(detections)
+            if (
+                detections
+                and self.stereo_depth.stereo_calibration_enabled
+                and frame_right is not None
+            ):
+                stereo_measurements = self.stereo_depth.calculate_depths(
+                    frame,
+                    frame_right,
+                    [det["center"] for det in detections],
+                )
+
+            if self.world_tracking:
+                self.update_world_tracks(
+                    detections,
+                    stereo_measurements,
+                    timestamp=measurement_time,
+                    yaw_raw=pose_yaw,
+                    pitch_raw=pose_pitch,
+                )
 
             # Process first detection (if any)
             detection = False
@@ -879,12 +1160,17 @@ class CameraTracker:
                 center_point = det['center']
                 center_x, center_y = center_point
 
-                # Calculate depth if stereo calibration is available
-                if self.stereo_depth.stereo_calibration_enabled and frame_right is not None:
-                    depth_mm = self.stereo_depth.calculate_depth(frame, frame_right, center_x, center_y)
-                    if depth_mm is not None:
-                        depth_m = depth_mm / 1000.0  # Convert to meters
-                        print(f"   Depth: {depth_m:.2f}m ({depth_mm:.1f}mm)")
+                # Reuse the batched stereo pass; do not recompute disparity per target.
+                stereo_measurement = stereo_measurements[0]
+                if stereo_measurement is not None:
+                    depth_mm = stereo_measurement.depth_mm
+                    depth_m = depth_mm / 1000.0
+                    print(
+                        f"   Depth: {depth_m:.2f}m ({depth_mm:.1f}mm), "
+                        f"quality={stereo_measurement.confidence:.2f}, "
+                        f"valid={stereo_measurement.valid_ratio:.2f}, "
+                        f"iqr={stereo_measurement.disparity_iqr_px:.2f}px"
+                    )
 
                 # Save detection image
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -902,14 +1188,32 @@ class CameraTracker:
                 print(f"🎯 Detection #{self.detection_count}: {detection_path}")
                 print(f"   Class: {class_name}, Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
 
-                # Detection updates angular belief; the control loop moves servos toward it.
-                self.update_target_belief(center_x, center_y, confidence, depth_mm=depth_mm)
+                # World mode already updated every valid 3D detection above.  The
+                # legacy angular belief remains the default/fallback mode.
+                if not self.world_tracking:
+                    self.update_target_belief(
+                        center_x,
+                        center_y,
+                        confidence,
+                        depth_mm=depth_mm,
+                    )
 
                 # Auto-trigger disabled - only trigger manually via button
                 # if detection and not self.latest_detection and self.trigger_servo_enabled:
                 #     threading.Thread(target=self.trigger_action_servo, daemon=True).start()
             else:
-                self.decay_target_belief()
+                if not self.world_tracking:
+                    self.decay_target_belief()
+
+            if self.world_tracking:
+                selected_track = self.world_tracker.get_selected_track(
+                    timestamp=measurement_time
+                )
+                if selected_track is not None:
+                    bbox = selected_track.bbox
+                    center_point = selected_track.center
+                    confidence = selected_track.confidence
+                    depth_mm = float(np.linalg.norm(selected_track.position))
 
             # Update detection state
             with self.inference_lock:
@@ -933,7 +1237,14 @@ class CameraTracker:
             return {
                 "detection": self.latest_detection,
                 "confidence": self.latest_confidence if hasattr(self, 'latest_confidence') else 0,
-                "recent_detections": self.recent_detections
+                "recent_detections": self.recent_detections,
+                "world_tracking": self.world_tracking,
+                "world_actuation_enabled": self.world_actuation_enabled,
+                "world_calibration_validated": self.world_calibration_validated,
+                "world_api_selection_enabled": self.world_api_selection_enabled,
+                "selected_track_id": self.world_tracker.selected_track_id,
+                "tracks": [track.to_dict() for track in self.latest_tracks],
+                "track_assignments": list(self.latest_track_assignments),
             }
 
     def camera_thread(self):
@@ -1025,6 +1336,13 @@ def main():
         print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations}")
         print(f"Belief velocity: alpha={tracker.belief_velocity_alpha:g}, pitch_alpha={tracker.belief_pitch_velocity_alpha:g}, decay={tracker.belief_velocity_decay:g}, max={tracker.belief_max_velocity_raw_per_s:g}/{tracker.belief_max_pitch_velocity_raw_per_s:g} raw/s, predict={tracker.belief_max_prediction_age:g}s")
         print(f"Tracking limits: max yaw/pitch step={tracker.max_yaw_step}/{tracker.max_pitch_step}, deadband={tracker.belief_deadband_raw} raw, pitch_scale={tracker.pitch_tracking_scale:g}, motor_readback={tracker.motor_readback_fps:g} FPS")
+        world_status = "ENABLED" if settings.world_tracking else "DISABLED (legacy angular mode)"
+        print(f"World-frame tracking: {world_status}")
+        if settings.world_tracking:
+            print(
+                "WARNING: world-frame motion assumes a stationary base and "
+                "verified servo signs/scales plus camera extrinsics"
+            )
     calib_status = "ENABLED" if tracker.stereo_depth.calibration_enabled else "DISABLED"
     if tracker.stereo_depth.calibration_enabled:
         calib_type = "STEREO" if tracker.stereo_depth.stereo_calibration_enabled else "SINGLE"
