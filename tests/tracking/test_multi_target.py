@@ -158,6 +158,26 @@ class MultiTargetTrackerTests(unittest.TestCase):
         self.assertEqual(reacquired.status, "confirmed")
         self.assertEqual(reacquired.misses, 0)
 
+    def test_track_deletion_is_time_gated_not_inference_tick_gated(self):
+        tracker = self.make_tracker(
+            confirm_hits=1,
+            max_misses=3,
+            delete_after_seconds=1.5,
+            auto_select=True,
+        )
+        original = tracker.update([detection(0, timestamp=0.0)], timestamp=0.0)[0]
+
+        for index in range(1, 10):
+            tracks = tracker.update([], timestamp=index * 0.05)
+
+        self.assertEqual([track.id for track in tracks], [original.id])
+        self.assertEqual(tracks[0].status, "lost")
+        self.assertGreater(tracks[0].misses, tracker.config.max_misses)
+
+        expired = tracker.update([], timestamp=1.6)
+        self.assertEqual(expired, [])
+        self.assertIsNone(tracker.selected_track_id)
+
     def test_explicit_clear_selection_suppresses_future_auto_selection(self):
         tracker = self.make_tracker(confirm_hits=1, auto_select=True)
         first = tracker.update([detection(100)], timestamp=0.0)[0]

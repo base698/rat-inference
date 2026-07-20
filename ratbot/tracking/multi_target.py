@@ -244,13 +244,14 @@ class MultiTargetTracker:
                 track.confidence *= self.config.confidence_decay
                 track.status = "lost" if track.status == "confirmed" else track.status
                 missing_seconds = max(0.0, timestamp - track.last_seen_time)
-                if (
-                    track.misses > self.config.max_misses
-                    or (
-                        self.config.delete_after_seconds > 0
-                        and missing_seconds > self.config.delete_after_seconds
-                    )
-                ):
+                if self.config.max_misses == 0:
+                    should_delete = track.misses > 0
+                elif self.config.delete_after_seconds > 0:
+                    should_delete = missing_seconds > self.config.delete_after_seconds
+                else:
+                    should_delete = track.misses > self.config.max_misses
+
+                if should_delete:
                     del self._tracks[track_id]
                     if self.selected_track_id == track_id:
                         self.selected_track_id = None
