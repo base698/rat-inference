@@ -84,8 +84,8 @@ tracking:
   # max_*_step caps per-control-tick servo jumps in raw units to reduce jerky motion.
   auto_tracking:
     smoothing_alpha: 0.45
-    max_yaw_step: 45
-    max_pitch_step: 35
+    max_yaw_step: 35
+    max_pitch_step: 22
     control_fps: 20
     belief_update_alpha: 0.75
     belief_pitch_update_alpha: 0.35
@@ -94,7 +94,7 @@ tracking:
     belief_max_age: 1.0
     belief_deadband_raw: 4
     belief_min_step_raw: 3
-    pitch_tracking_scale: 2.2
+    pitch_tracking_scale: 1.6
     belief_reseed_distance_raw: 160
     belief_reseed_confirmations: 2
     belief_reseed_match_distance_raw: 120
@@ -148,12 +148,12 @@ camera:
 # PID Controller Gains
 pid:
   yaw:
-    kp: 0.70   # Proportional gain
+    kp: 0.55   # Proportional gain
     ki: 0.00   # Integral gain
-    kd: 0.03   # Derivative gain
+    kd: 0.00   # Derivative gain
 
   pitch:
-    kp: 0.90   # Proportional gain
+    kp: 0.75   # Proportional gain
     ki: 0.00   # Integral gain
     kd: 0.00   # Derivative gain
 
