@@ -42,16 +42,30 @@ class TrackingServoController:
         self.current_pitch = int(pitch_center)
         self.lock = threading.Lock()
 
-    def read_positions(self):
-        """Read current yaw and pitch positions from the motor bus."""
-        if not self.motor_bus or not self.connected:
-            return self.current_yaw, self.current_pitch
+    def read_measured_positions(self):
+        """Read Present_Position or fail closed when connected hardware fails.
 
+        In simulation/disconnected mode, commanded state is the simulated physical
+        state. Connected callers performing geometry must never receive a command
+        fallback disguised as measured pose.
+        """
+        if not self.connected:
+            return self.current_yaw, self.current_pitch
+        if not self.motor_bus:
+            raise RuntimeError("servo bus is unavailable for measured readback")
+        with self.lock:
+            yaw_pos = self.motor_bus.read(
+                "Present_Position", "yaw", normalize=False
+            )
+            pitch_pos = self.motor_bus.read(
+                "Present_Position", "pitch", normalize=False
+            )
+        return int(yaw_pos), int(pitch_pos)
+
+    def read_positions(self):
+        """Read positions for display, retaining legacy fallback behavior."""
         try:
-            with self.lock:
-                yaw_pos = self.motor_bus.read("Present_Position", "yaw", normalize=False)
-                pitch_pos = self.motor_bus.read("Present_Position", "pitch", normalize=False)
-            return int(yaw_pos), int(pitch_pos)
+            return self.read_measured_positions()
         except Exception as exc:
             print(f"Error reading motor positions: {exc}")
             return self.current_yaw, self.current_pitch

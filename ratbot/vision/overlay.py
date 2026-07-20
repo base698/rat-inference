@@ -65,8 +65,9 @@ class OverlayRenderer:
         stereo_mode,
         bbox,
         center_point,
+        tracks=(),
     ):
-        """Draw crosshair, depth status, bounding box, and center point."""
+        """Draw crosshair, depth status, boxes, stable IDs, and selected target."""
         ch_x = self.crosshair_x(current_yaw)
         focal_length_y = None
         ch_y = self.crosshair_y(
@@ -160,7 +161,45 @@ class OverlayRenderer:
                 2,
             )
 
-        if bbox is not None:
+        for track in tracks:
+            track_bbox = (
+                track.get("bbox") if isinstance(track, dict) else track.bbox
+            )
+            if track_bbox is None:
+                continue
+            track_id = track.get("id") if isinstance(track, dict) else track.id
+            selected = (
+                bool(track.get("selected"))
+                if isinstance(track, dict)
+                else bool(track.selected)
+            )
+            status = (
+                track.get("status", "")
+                if isinstance(track, dict)
+                else track.status
+            )
+            misses = (
+                int(track.get("misses", 0))
+                if isinstance(track, dict)
+                else int(track.misses)
+            )
+            if status in {"tentative", "lost"} or misses > 0:
+                continue
+            x1, y1, x2, y2 = map(int, track_bbox)
+            color = (0, 0, 255) if selected else (0, 200, 255)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3 if selected else 2)
+            marker = "*" if selected else ""
+            cv2.putText(
+                frame,
+                f"ID {track_id}{marker} {status}",
+                (x1, max(15, y1 - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                2,
+            )
+
+        if bbox is not None and not tracks:
             x1, y1, x2, y2 = bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
 

@@ -50,3 +50,7 @@ all = [
 
 # Note: tools/vision/legacy/main.py uses Roboflow's 'inference' package which conflicts with lerobot.
 # If you need to run tools/vision/legacy/main.py, create a separate venv and install inference package there.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -57,6 +57,26 @@ class TrackerRuntimeConfig:
     belief_pitch_update_alpha: float | None
     belief_pitch_velocity_alpha: float | None
     belief_max_pitch_velocity_raw_per_s: float | None
+    world_tracking: bool
+    world_gate_distance_mm: float
+    world_confirm_hits: int
+    world_max_misses: int
+    world_delete_after_seconds: float
+    world_process_acceleration_std_mm_s2: float
+    world_min_depth_confidence: float
+    world_aim_latency_seconds: float
+    world_yaw_center_raw: float | None
+    world_pitch_center_raw: float | None
+    world_yaw_raw_per_degree: float | None
+    world_pitch_raw_per_degree: float | None
+    world_yaw_sign: float
+    world_pitch_sign: float
+    world_camera_translation_mm: tuple[float, float, float]
+    world_camera_mount_rpy_degrees: tuple[float, float, float]
+    world_log_path: str | None
+    world_api_selection_enabled: bool
+    world_actuation_enabled: bool
+    world_calibration_validated: bool
 
     def to_tracker_kwargs(self) -> dict[str, Any]:
         values = asdict(self)
@@ -81,12 +101,34 @@ def _sections(raw_config: Mapping[str, Any] | None):
     return detection, auto_tracking
 
 
+def _world_section(raw_config: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    raw_config = raw_config or {}
+    return raw_config.get("tracking", {}).get("world_frame", {})
+
+
+def _strict_bool(
+    values: Mapping[str, Any], key: str, *, default: bool = False
+) -> bool:
+    value = values.get(key, default)
+    if type(value) is not bool:
+        raise ValueError(f"tracking.world_frame.{key} must be a YAML boolean")
+    return value
+
+
+def _triple(value, default=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    value = default if value is None else value
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError("world-frame translation/RPY values must contain exactly 3 numbers")
+    return (float(value[0]), float(value[1]), float(value[2]))
+
+
 def build_argument_parser(
     raw_config: Mapping[str, Any] | None,
     *,
     inference_fps_default: float,
 ) -> argparse.ArgumentParser:
     detection, auto = _sections(raw_config)
+    world = _world_section(raw_config)
     parser = argparse.ArgumentParser(
         description="Camera tracker with servo control and rat detection"
     )
@@ -133,6 +175,7 @@ def build_argument_parser(
         "calibration": "Path to camera calibration file (.npz, default: camera_calibration.npz)",
         "stereo": "Enable stereo mode for depth estimation (requires stereo calibration)",
         "baseline_override": "Override stereo baseline in mm (use if calibration baseline is incorrect)",
+        "world_tracking": "Enable opt-in multi-target tracking in the fixed turret-base 3D frame",
         "enable_trigger": "Enable GPIO trigger servo",
         "api_host": "Host for FastAPI server",
         "api_port": "Port for FastAPI server",
@@ -293,6 +336,11 @@ def build_argument_parser(
     )
     parser.add_argument("--stereo", action="store_true")
     parser.add_argument("--baseline-override", type=float, default=None)
+    parser.add_argument(
+        "--world-tracking",
+        action="store_true",
+        default=_strict_bool(world, "enabled"),
+    )
     parser.add_argument("--enable-trigger", action="store_true")
     parser.add_argument("--api-host", type=str, default="0.0.0.0")
     parser.add_argument("--api-port", type=int, default=8000)
@@ -315,6 +363,7 @@ def parse_runtime_config(
     )
     args = parser.parse_args(argv)
     detection, _ = _sections(raw_config)
+    world = _world_section(raw_config)
 
     target_classes = args.target_class
     if target_classes is None:
@@ -362,7 +411,7 @@ def parse_runtime_config(
         inference_fps=args.inference_fps,
         target_classes=tuple(target_classes),
         calibration_file=calibration,
-        stereo_mode=args.stereo,
+        stereo_mode=args.stereo or args.world_tracking,
         baseline_override=args.baseline_override,
         tracking_smoothing=args.tracking_smoothing,
         max_yaw_step=args.max_yaw_step,
@@ -390,6 +439,36 @@ def parse_runtime_config(
         belief_pitch_velocity_alpha=args.belief_pitch_velocity_alpha,
         belief_max_pitch_velocity_raw_per_s=(
             args.belief_max_pitch_velocity_raw_per_s
+        ),
+        world_tracking=args.world_tracking,
+        world_gate_distance_mm=float(world.get("gate_distance_mm", 750.0)),
+        world_confirm_hits=int(world.get("confirm_hits", 3)),
+        world_max_misses=int(world.get("max_misses", 5)),
+        world_delete_after_seconds=float(world.get("delete_after_seconds", 1.5)),
+        world_process_acceleration_std_mm_s2=float(
+            world.get("process_acceleration_std_mm_s2", 300.0)
+        ),
+        world_min_depth_confidence=float(
+            world.get("min_depth_confidence", 0.2)
+        ),
+        world_aim_latency_seconds=float(world.get("aim_latency_seconds", 0.12)),
+        world_yaw_center_raw=world.get("yaw_center_raw"),
+        world_pitch_center_raw=world.get("pitch_center_raw"),
+        world_yaw_raw_per_degree=world.get("yaw_raw_per_degree"),
+        world_pitch_raw_per_degree=world.get("pitch_raw_per_degree"),
+        world_yaw_sign=float(world.get("yaw_sign", 1.0)),
+        world_pitch_sign=float(world.get("pitch_sign", -1.0)),
+        world_camera_translation_mm=_triple(world.get("camera_translation_mm")),
+        world_camera_mount_rpy_degrees=_triple(
+            world.get("camera_mount_rpy_degrees")
+        ),
+        world_log_path=world.get("log_path"),
+        world_api_selection_enabled=_strict_bool(
+            world, "allow_remote_selection"
+        ),
+        world_actuation_enabled=_strict_bool(world, "actuation_enabled"),
+        world_calibration_validated=_strict_bool(
+            world, "calibration_validated"
         ),
     )
     return ApplicationRuntimeConfig(

@@ -86,6 +86,7 @@ class TrackerControlApi:
                 "initial_yaw": initial_yaw,
                 "initial_pitch": initial_pitch,
                 "enable_trigger": tracker.trigger_servo_enabled if tracker else False,
+                "world_tracking": bool(getattr(tracker, "world_tracking", False)) if tracker else False,
             })
 
         @app.get("/status")
@@ -228,6 +229,91 @@ class TrackerControlApi:
                     },
                     status_code=500,
                 )
+
+        @app.get("/tracks")
+        async def get_tracks():
+            """Return all fixed-frame tracks and explicit selection state."""
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    content={"world_tracking": False, "selected_track_id": None, "tracks": []},
+                    status_code=200,
+                )
+            tracks = tracker.get_world_tracks()
+            selected = next(
+                (item["id"] for item in tracks if item.get("selected")),
+                None,
+            )
+            return JSONResponse(
+                content={
+                    "world_tracking": bool(getattr(tracker, "world_tracking", False)),
+                    "world_actuation_enabled": bool(
+                        getattr(tracker, "world_actuation_enabled", False)
+                    ),
+                    "remote_selection_enabled": bool(
+                        getattr(tracker, "world_api_selection_enabled", False)
+                    ),
+                    "selected_track_id": selected,
+                    "tracks": tracks,
+                },
+                status_code=200,
+            )
+
+        @app.post("/tracks/select")
+        async def select_track(request: dict):
+            """Select a stable target ID without silently switching targets."""
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    content={"success": False, "message": "Tracker not initialized"},
+                    status_code=500,
+                )
+            if not bool(getattr(tracker, "world_api_selection_enabled", False)):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "message": "Remote world-track selection is disabled",
+                    },
+                    status_code=403,
+                )
+            target_id = request.get("track_id")
+            if isinstance(target_id, bool) or not isinstance(target_id, int):
+                return JSONResponse(
+                    content={"success": False, "message": "track_id must be an integer"},
+                    status_code=400,
+                )
+            if not tracker.select_world_target(target_id):
+                return JSONResponse(
+                    content={"success": False, "message": "Track not found"},
+                    status_code=404,
+                )
+            return JSONResponse(
+                content={"success": True, "selected_track_id": int(target_id)},
+                status_code=200,
+            )
+
+        @app.post("/tracks/clear-selection")
+        async def clear_track_selection():
+            """Clear autonomous target selection without deleting tracks."""
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    content={"success": False, "message": "Tracker not initialized"},
+                    status_code=500,
+                )
+            if not bool(getattr(tracker, "world_api_selection_enabled", False)):
+                return JSONResponse(
+                    content={
+                        "success": False,
+                        "message": "Remote world-track selection is disabled",
+                    },
+                    status_code=403,
+                )
+            tracker.clear_world_selection()
+            return JSONResponse(
+                content={"success": True, "selected_track_id": None},
+                status_code=200,
+            )
 
         @app.get("/detections/{filename}")
         async def get_detection(filename: str):

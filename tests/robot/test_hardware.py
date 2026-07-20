@@ -82,6 +82,15 @@ class TrackingServoControllerTests(unittest.TestCase):
 
         self.assertEqual(controller.read_positions(), (2050, 240))
 
+    def test_strict_measured_readback_fails_closed_on_bus_error(self):
+        controller = self.make_controller()
+        controller.motor_bus = Mock()
+        controller.motor_bus.read.side_effect = RuntimeError("bus read failed")
+        controller.connected = True
+
+        with self.assertRaises(RuntimeError):
+            controller.read_measured_positions()
+
     def test_disconnect_closes_bus_and_marks_controller_disconnected(self):
         bus = FakeMotorBus()
         controller = self.make_controller()
