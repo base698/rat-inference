@@ -82,9 +82,9 @@ class CameraTrackerWorldWiringTests(unittest.TestCase):
 
         self.assertEqual(len(tracks), 1)
         self.assertTrue(tracks[0].selected)
-        self.assertGreater(tracker.current_yaw, initial_yaw)
+        self.assertLess(tracker.current_yaw, initial_yaw)
         self.assertLessEqual(
-            tracker.current_yaw - initial_yaw,
+            initial_yaw - tracker.current_yaw,
             tracker.max_yaw_step,
         )
 

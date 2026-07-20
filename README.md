@@ -119,6 +119,15 @@ uv run python tools/vision/inference/inference.py --input image.jpg --model runs
 
 ### 4. Real-time Tracking (Jetson Nano)
 
+The recommended live robot mode is the default **angular belief** tracker. It
+uses image detections to maintain a yaw/pitch belief and then drives the servos
+toward that belief. This is the path to use for normal rat/can tracking.
+
+Do **not** add `--world-tracking` for normal tracking yet. The multi-target
+world-frame tracker is useful for visualization and experiments, but it is still
+in progress and currently loses or churns target IDs more often than the angular
+belief tracker.
+
 Run the real-time camera tracker with servo control:
 
 ```bash
@@ -168,6 +177,11 @@ uv run --extra jetson python rt_200.py \
   --pitch-tracking-scale 2.2 \
   --belief-reseed-distance-raw 160
 ```
+
+The same default path is what `./run.sh rt200` is intended to start on the
+Jetson: CSI stereo camera input, TensorRT model inference, Feetech servos, and
+angular-belief tracking. Keep world tracking opt-in until its target identity and
+reacquisition behavior are reliable enough for normal use.
 
 #### Stereo Depth + Laser Tracking
 
@@ -314,13 +328,19 @@ Current effective baseline override: 51.1mm
 
 Stereo RMS is usable for testing but still high; a rigid printed target and more varied poses should improve it.
 
-## Stable Multi-Target World-Frame Tracking (Opt-In)
+## Experimental Multi-Target World-Frame Tracking (In Progress, Opt-In)
+
+This mode is **not** the recommended default tracker. Use the angular belief
+tracker above for normal live tracking.
 
 `--world-tracking` enables the new 3D tracker in **shadow mode**. It projects every
 YOLO detection with valid stereo depth into a fixed frame attached to the turret
 base, predicts independent constant-velocity Kalman tracks, and preserves stable
-IDs through short occlusions. Shadow mode computes, overlays, exposes, and logs
-tracks but does not connect them to servo actuation.
+IDs through short occlusions when the depth and association data are good.
+Current hardware testing shows target IDs can still churn or get lost, so this
+mode should be treated as visualization/research work rather than production
+tracking. Shadow mode computes, overlays, exposes, and logs tracks but does not
+connect them to servo actuation.
 
 ```bash
 python3 rt_200.py --enable-camera --stereo --world-tracking

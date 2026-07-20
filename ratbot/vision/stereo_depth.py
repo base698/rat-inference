@@ -242,6 +242,39 @@ class StereoDepthService:
             print(f"Error rectifying stereo point: {e}")
             return int(x), int(y)
 
+    def raw_pixel_depth_to_camera(self, x, y, depth_mm):
+        """Back-project a raw left-camera pixel using the raw camera model."""
+        intrinsics = self.K1 if self.K1 is not None else self.camera_matrix
+        if intrinsics is None:
+            intrinsics = self.P1[:, :3] if self.P1 is not None else None
+        if intrinsics is None:
+            raise ValueError("camera intrinsics are not loaded")
+
+        if self.D1 is not None and self.K1 is not None:
+            point = np.array([[[float(x), float(y)]]], dtype=np.float32)
+            normalized = cv2.undistortPoints(point, self.K1, self.D1)[0, 0]
+            return np.array(
+                [
+                    float(normalized[0]) * depth_mm,
+                    float(normalized[1]) * depth_mm,
+                    depth_mm,
+                ],
+                dtype=float,
+            )
+
+        fx = float(intrinsics[0, 0])
+        fy = float(intrinsics[1, 1])
+        cx = float(intrinsics[0, 2])
+        cy = float(intrinsics[1, 2])
+        return np.array(
+            [
+                (float(x) - cx) * depth_mm / fx,
+                (float(y) - cy) * depth_mm / fy,
+                depth_mm,
+            ],
+            dtype=float,
+        )
+
     def undistort_frame(self, frame, use_left=True):
         """Apply camera calibration to undistort frame"""
         if not self.calibration_enabled:
@@ -259,7 +292,15 @@ class StereoDepthService:
             print(f"Error undistorting frame: {e}")
             return frame
 
-    def _sample_depth_measurement(self, gray_left, disparity, x, y):
+    def _sample_depth_measurement(
+        self,
+        gray_left,
+        disparity,
+        x,
+        y,
+        raw_x=None,
+        raw_y=None,
+    ):
         """Sample one rectified point from an already-computed disparity map."""
         if x < 0 or x >= disparity.shape[1] or y < 0 or y >= disparity.shape[0]:
             self.last_depth_debug = f"rectified point out of frame ({x}, {y})"
@@ -327,19 +368,16 @@ class StereoDepthService:
             min(1.0, valid_ratio * texture_quality * spread_quality),
         )
 
-        intrinsics = self.P1[:, :3] if self.P1 is not None else self.K1
+        point_camera = self.raw_pixel_depth_to_camera(
+            x if raw_x is None else raw_x,
+            y if raw_y is None else raw_y,
+            depth_mm,
+        )
+        intrinsics = self.K1 if self.K1 is not None else self.camera_matrix
+        if intrinsics is None:
+            intrinsics = self.P1[:, :3] if self.P1 is not None else np.eye(3)
         fx = float(intrinsics[0, 0])
         fy = float(intrinsics[1, 1])
-        cx = float(intrinsics[0, 2])
-        cy = float(intrinsics[1, 2])
-        point_camera = np.array(
-            [
-                (x - cx) * depth_mm / fx,
-                (y - cy) * depth_mm / fy,
-                depth_mm,
-            ],
-            dtype=float,
-        )
         disparity_sigma = max(0.5, disparity_iqr / 1.349)
         depth_sigma = max(
             5.0,
@@ -386,7 +424,14 @@ class StereoDepthService:
             for raw_x, raw_y in points:
                 x, y = self.rectify_stereo_point(raw_x, raw_y)
                 measurements.append(
-                    self._sample_depth_measurement(gray_left, disparity, x, y)
+                    self._sample_depth_measurement(
+                        gray_left,
+                        disparity,
+                        x,
+                        y,
+                        raw_x=raw_x,
+                        raw_y=raw_y,
+                    )
                 )
             return measurements
         except Exception as exc:

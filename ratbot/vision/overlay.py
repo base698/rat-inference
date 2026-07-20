@@ -178,7 +178,12 @@ class OverlayRenderer:
                 if isinstance(track, dict)
                 else track.status
             )
-            if status == "tentative":
+            misses = (
+                int(track.get("misses", 0))
+                if isinstance(track, dict)
+                else int(track.misses)
+            )
+            if status in {"tentative", "lost"} or misses > 0:
                 continue
             x1, y1, x2, y2 = map(int, track_bbox)
             color = (0, 0, 255) if selected else (0, 200, 255)

@@ -595,6 +595,7 @@ class CameraTracker:
             aim_latency_seconds=self.world_aim_latency_seconds,
             min_confidence=belief_min_confidence,
             max_age_seconds=belief_max_age,
+            robot=self,
         )
         controller_belief = (
             self.world_belief
@@ -877,7 +878,7 @@ class CameraTracker:
         with self.inference_lock:
             self.latest_tracks = tracks
             self.latest_track_assignments = list(self.world_tracker.last_assignments)
-            if selected is not None:
+            if selected is not None and selected.misses == 0:
                 self.latest_bbox = selected.bbox
                 self.latest_center_point = selected.center
         if self.world_log_path:
@@ -1210,7 +1211,7 @@ class CameraTracker:
                 selected_track = self.world_tracker.get_selected_track(
                     timestamp=measurement_time
                 )
-                if selected_track is not None:
+                if selected_track is not None and selected_track.misses == 0:
                     bbox = selected_track.bbox
                     center_point = selected_track.center
                     confidence = selected_track.confidence

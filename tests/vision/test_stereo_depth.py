@@ -176,6 +176,35 @@ class StereoDepthServiceTests(unittest.TestCase):
         self.assertIsNotNone(measurements[0])
         self.assertIsNone(measurements[1])
 
+    def test_depth_point_uses_raw_left_camera_ray_not_rectified_projection(self):
+        service = StereoDepthService(min_texture_std=0.0, max_valid_mm=0.0)
+        service.stereo_calibration_enabled = True
+        service.stereo_matcher = FakeMatcher(25.0)
+        service.stereo_focal_length = 100.0
+        service.baseline = 50.0
+        service.K1 = np.array(
+            [[100.0, 0.0, 32.0], [0.0, 100.0, 32.0], [0.0, 0.0, 1.0]]
+        )
+        service.D1 = np.zeros(5)
+        service.P1 = np.array(
+            [
+                [100.0, 0.0, -250.0, 0.0],
+                [0.0, 100.0, -100.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ]
+        )
+        service.rectify_stereo_point = lambda _x, _y: (40, 40)
+        textured = np.indices((64, 64)).sum(axis=0).astype(np.uint8)
+        frame = np.repeat(textured[:, :, None], 3, axis=2)
+
+        measurements = service.calculate_depths(frame, frame, [(32, 32)])
+
+        self.assertIsNotNone(measurements[0])
+        np.testing.assert_allclose(
+            measurements[0].point_camera_mm,
+            [0.0, 0.0, 200.0],
+        )
+
     def test_rectification_failure_returns_original_frames(self):
         service = StereoDepthService()
         service.stereo_map_left = (object(), object())
