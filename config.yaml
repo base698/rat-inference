@@ -116,8 +116,8 @@ tracking:
   world_frame:
     enabled: false
     # World-frame computation is shadow-only unless both gates are true.
-    actuation_enabled: true
-    calibration_validated: true
+    actuation_enabled: false
+    calibration_validated: false
     gate_distance_mm: 750.0
     confirm_hits: 3
     max_misses: 5
@@ -136,7 +136,7 @@ tracking:
     log_path: null       # Optional replayable JSONL, e.g. detections/world_tracks.jsonl
     # Mutating track-selection routes are unauthenticated; keep disabled unless
     # the API is isolated to a trusted interface/network.
-    allow_remote_selection: true
+    allow_remote_selection: false
 
   # Frame rates
   video_fps: 30        # Camera/video frame rate
