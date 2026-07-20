@@ -27,7 +27,14 @@ class StereoPointMeasurement:
 class StereoDepthService:
     """Own camera calibration state and calculate depth from stereo frames."""
 
-    def __init__(self, calibration_file=None, baseline_override=None, min_texture_std=4.0, max_valid_mm=6000.0):
+    def __init__(
+        self,
+        calibration_file=None,
+        baseline_override=None,
+        min_texture_std=4.0,
+        min_valid_mm=0.0,
+        max_valid_mm=6000.0,
+    ):
         self.calibration_file = calibration_file
         self.camera_matrix = None
         self.dist_coeffs = None
@@ -54,6 +61,7 @@ class StereoDepthService:
         self.stereo_num_disparities = 192
         self.stereo_disparity_sign = 1
         self.depth_min_texture_std = float(min_texture_std)
+        self.depth_min_valid_mm = float(min_valid_mm)
         self.depth_max_valid_mm = float(max_valid_mm)
         self.last_depth_debug = "not computed"
 
@@ -297,6 +305,9 @@ class StereoDepthService:
 
         focal_length = float(self.stereo_focal_length or self.K1[0, 0])
         depth_mm = (focal_length * float(self.baseline)) / disparity_px
+        if self.depth_min_valid_mm > 0 and depth_mm < self.depth_min_valid_mm:
+            self.last_depth_debug = f"depth too near {depth_mm / 1000.0:.2f}m"
+            return None
         if self.depth_max_valid_mm > 0 and depth_mm > self.depth_max_valid_mm:
             self.last_depth_debug = f"depth too far {depth_mm / 1000.0:.2f}m"
             return None

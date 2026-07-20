@@ -245,6 +245,7 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 - The web UI has a `Clear Belief` button, backed by the robot control API, that clears autonomous target belief and PID state without recentering the servos or clearing detection history.
 - The web UI syncs the yaw/pitch sliders from live motor readback during status polling, unless you are actively dragging a slider or a manual position write is in flight.
 - `tracking.depth_min_texture_std` rejects stereo depth samples on blank/low-texture regions instead of showing unstable but plausible-looking distances. Current test value: `2.5`; lower is more permissive.
+- `tracking.depth_min_valid_mm` rejects near-depth stereo failures before they can produce false `0.3m` readings on the floor. Current test value: `500.0`.
 - `tracking.depth_max_valid_mm` rejects far-depth spikes before they can move the depth-compensated crosshair. Current test value: `6000.0`.
 - `tracking.depth_adjust_smoothing_alpha` and `tracking.depth_adjust_missing_decay` smooth the depth-based visual crosshair Y offset so the overlay does not jump on noisy stereo samples.
 

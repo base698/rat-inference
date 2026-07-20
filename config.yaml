@@ -28,6 +28,7 @@ servos:
 tracking:
   # Stereo depth is unreliable on flat/blank surfaces; reject low-texture sample windows.
   depth_min_texture_std: 2.5
+  depth_min_valid_mm: 500.0
   depth_max_valid_mm: 6000.0
   depth_adjust_smoothing_alpha: 0.20
   depth_adjust_missing_decay: 0.85

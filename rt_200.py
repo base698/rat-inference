@@ -459,6 +459,7 @@ class CameraTracker:
             calibration_file=calibration_file,
             baseline_override=baseline_override,
             min_texture_std=tracking_config.get('depth_min_texture_std', 4.0),
+            min_valid_mm=tracking_config.get('depth_min_valid_mm', 0.0),
             max_valid_mm=tracking_config.get('depth_max_valid_mm', 6000.0),
         )
         self.overlay_renderer = OverlayRenderer(

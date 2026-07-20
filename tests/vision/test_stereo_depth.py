@@ -113,6 +113,24 @@ class StereoDepthServiceTests(unittest.TestCase):
         self.assertIsNone(service.calculate_depth(frame, frame, 32, 32))
         self.assertEqual(service.last_depth_debug, "depth too far 0.50m")
 
+    def test_depth_below_configured_limit_is_rejected(self):
+        service = StereoDepthService(
+            min_texture_std=0.0,
+            min_valid_mm=300.0,
+            max_valid_mm=0.0,
+        )
+        service.stereo_calibration_enabled = True
+        service.stereo_matcher = FakeMatcher(25.0)
+        service.stereo_focal_length = 100.0
+        service.baseline = 50.0
+        service.K1 = np.eye(3)
+        service.D1 = np.zeros(5)
+        textured = np.indices((64, 64)).sum(axis=0).astype(np.uint8)
+        frame = np.repeat(textured[:, :, None], 3, axis=2)
+
+        self.assertIsNone(service.calculate_depth(frame, frame, 32, 32))
+        self.assertEqual(service.last_depth_debug, "depth too near 0.20m")
+
     def test_batch_depth_computes_one_disparity_map_and_returns_quality(self):
         service = StereoDepthService(min_texture_std=0.0, max_valid_mm=0.0)
         service.stereo_calibration_enabled = True
