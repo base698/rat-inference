@@ -116,7 +116,7 @@ tracking:
     gate_distance_mm: 750.0
     confirm_hits: 3
     max_misses: 5
-    delete_after_seconds: 1.5
+    delete_after_seconds: 4.0
     process_acceleration_std_mm_s2: 300.0
     min_depth_confidence: 0.20
     aim_latency_seconds: 0.12

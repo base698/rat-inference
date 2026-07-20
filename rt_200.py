@@ -316,7 +316,7 @@ class CameraTracker:
                  belief_max_pitch_velocity_raw_per_s=None,
                  world_tracking=False, world_gate_distance_mm=750.0,
                  world_confirm_hits=3, world_max_misses=5,
-                 world_delete_after_seconds=1.5,
+                 world_delete_after_seconds=4.0,
                  world_process_acceleration_std_mm_s2=300.0,
                  world_min_depth_confidence=0.2,
                  world_aim_latency_seconds=0.12,
