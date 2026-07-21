@@ -65,6 +65,12 @@ class FakeTracker:
             raise KeyError(recording_id)
         return {"metadata": self.recordings[0], "frames": [{"monotonic_time": 1.0}]}
 
+    def delete_track_recording(self, recording_id):
+        if recording_id != "20260721T120000-test":
+            raise KeyError(recording_id)
+        self.recordings = []
+        return {"success": True, "id": recording_id, "frame_count": 4}
+
     def reprocess_track_recording(self, recording_id, parameters):
         if recording_id != "20260721T120000-test":
             raise KeyError(recording_id)
@@ -158,11 +164,18 @@ class WorldTrackApiTests(unittest.TestCase):
         started = asyncio.run(self.endpoint("/api/track-recordings/start", "POST")())
         stopped = asyncio.run(self.endpoint("/api/track-recordings/stop", "POST")())
         catalog = asyncio.run(self.endpoint("/api/track-recordings", "GET")())
+        deleted = asyncio.run(
+            self.endpoint("/api/track-recordings/{recording_id}", "DELETE")(
+                recording_id="20260721T120000-test"
+            )
+        )
 
         self.assertFalse(json.loads(status.body)["recording"])
         self.assertEqual(json.loads(started.body)["status"], "recording")
         self.assertEqual(json.loads(stopped.body)["frame_count"], 2)
         self.assertEqual(json.loads(catalog.body)["recordings"][0]["frame_count"], 4)
+        self.assertTrue(json.loads(deleted.body)["success"])
+        self.assertEqual(self.tracker.recordings, [])
 
     def test_recording_mutations_are_disabled_by_default_gate(self):
         self.tracker.world_api_recording_enabled = False
@@ -180,12 +193,18 @@ class WorldTrackApiTests(unittest.TestCase):
                 recording_id="20260721T120000-test", request={}
             )
         )
+        deleted = asyncio.run(
+            self.endpoint("/api/track-recordings/{recording_id}", "DELETE")(
+                recording_id="20260721T120000-test"
+            )
+        )
 
         self.assertEqual(started.status_code, 403)
         self.assertEqual(stopped.status_code, 403)
         self.assertEqual(catalog.status_code, 403)
         self.assertEqual(load.status_code, 403)
         self.assertEqual(reprocess.status_code, 403)
+        self.assertEqual(deleted.status_code, 403)
 
     def test_recording_storage_error_returns_insufficient_storage(self):
         def fail_start():
@@ -210,10 +229,16 @@ class WorldTrackApiTests(unittest.TestCase):
         loaded = asyncio.run(replay("20260721T120000-test"))
         tuned = asyncio.run(reprocess("20260721T120000-test", {"confirm_hits": 2}))
         missing = asyncio.run(replay("missing"))
+        delete_missing = asyncio.run(
+            self.endpoint("/api/track-recordings/{recording_id}", "DELETE")(
+                recording_id="missing"
+            )
+        )
 
         self.assertEqual(json.loads(loaded.body)["frames"][0]["monotonic_time"], 1.0)
         self.assertEqual(json.loads(tuned.body)["parameters"]["confirm_hits"], 2)
         self.assertEqual(missing.status_code, 404)
+        self.assertEqual(delete_missing.status_code, 404)
 
     def test_replay_api_rejects_concurrent_work_instead_of_queueing(self):
         original = self.tracker.load_track_recording

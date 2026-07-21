@@ -148,6 +148,23 @@ class TrackRecordingStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "stop the active recording"):
             self.store.load(started["id"])
 
+    def test_delete_removes_stopped_session_but_rejects_active_recording(self):
+        started = self.store.start({})
+        self.store.append(self.frame(10.0, 1000.0))
+        self.store.stop()
+
+        deleted = self.store.delete(started["id"])
+
+        self.assertTrue(deleted["success"])
+        self.assertEqual(deleted["id"], started["id"])
+        self.assertEqual(self.store.list_recordings(), [])
+        with self.assertRaises(KeyError):
+            self.store.load(started["id"])
+
+        active = self.store.start({})
+        with self.assertRaisesRegex(RuntimeError, "stop the active recording"):
+            self.store.delete(active["id"])
+
     def test_restart_recovers_interrupted_recording_metadata_from_jsonl(self):
         started = self.store.start({})
         self.store.append(self.frame(10.0, 1000.0))

@@ -464,6 +464,45 @@ class TrackerControlApi:
                         {"success": False, "message": str(exc)}, status_code=422
                     )
 
+        @app.delete("/api/track-recordings/{recording_id}")
+        async def delete_recording(recording_id: str):
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    {"success": False, "message": "Tracker not initialized"},
+                    status_code=503,
+                )
+            if not bool(getattr(tracker, "world_api_recording_enabled", False)):
+                return JSONResponse(
+                    {"success": False, "message": "Remote track replay is disabled"},
+                    status_code=403,
+                )
+            if replay_lock.locked():
+                return JSONResponse(
+                    {"success": False, "message": "Replay service is busy"},
+                    status_code=429,
+                )
+            async with replay_lock:
+                try:
+                    result = await run_in_threadpool(
+                        tracker.delete_track_recording,
+                        recording_id,
+                    )
+                    return JSONResponse(result, status_code=200)
+                except KeyError:
+                    return JSONResponse(
+                        {"success": False, "message": "Recording not found"},
+                        status_code=404,
+                    )
+                except RuntimeError as exc:
+                    return JSONResponse(
+                        {"success": False, "message": str(exc)}, status_code=409
+                    )
+                except OSError as exc:
+                    return JSONResponse(
+                        {"success": False, "message": str(exc)}, status_code=507
+                    )
+
         @app.post("/api/track-recordings/{recording_id}/reprocess")
         async def reprocess_recording(recording_id: str, request: dict):
             tracker = self.tracker

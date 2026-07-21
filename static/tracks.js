@@ -29,8 +29,15 @@
       select.innerHTML = '';
       if (!data.recordings.length) {
         select.innerHTML = '<option value="">No recordings yet</option>';
+        recordingId = null; replay = null; frames = []; index = 0;
+        rebuildTrackOptions();
+        $('timeline').max = 0;
+        $('timeline').value = 0;
+        $('duration').textContent = '0.00s';
+        $('deleteRecordingButton').disabled = true;
         $('status').textContent = 'Start a recording from the main control page.';
         drawEmpty('No saved track recordings');
+        updateMetrics(null);
         return;
       }
       data.recordings.forEach(item => {
@@ -43,6 +50,7 @@
       await loadRecording(select.value);
     } catch (error) {
       $('status').textContent = error.message;
+      $('deleteRecordingButton').disabled = true;
       drawEmpty('Could not load recording catalog');
     }
   }
@@ -61,11 +69,14 @@
       $('timeline').max = Math.max(0, frames.length - 1);
       $('timeline').value = 0;
       $('duration').textContent = formatSeconds(lastTime() - firstTime());
+      $('deleteRecordingButton').disabled = false;
       $('status').textContent = `${frames.length} observation frames loaded.`;
       render();
     } catch (error) {
       $('status').textContent = error.message;
+      recordingId = null;
       frames = [];
+      $('deleteRecordingButton').disabled = true;
       render();
     }
   }
@@ -106,6 +117,27 @@
       render();
     } catch (error) { $('status').textContent = error.message; }
     finally { $('reprocessButton').disabled = false; }
+  }
+
+  async function deleteRecording() {
+    const id = $('recordingSelect').value || recordingId;
+    if (!id) return;
+    pause();
+    if (!window.confirm(`Delete recording ${id}? This cannot be undone.`)) return;
+    const button = $('deleteRecordingButton');
+    button.disabled = true;
+    $('status').textContent = `Deleting ${id}…`;
+    try {
+      await jsonFetch(`/api/track-recordings/${encodeURIComponent(id)}`, {method: 'DELETE'});
+      if (recordingId === id) {
+        recordingId = null; replay = null; frames = []; index = 0;
+      }
+      await loadCatalog();
+      $('status').textContent = `Deleted recording ${id}.`;
+    } catch (error) {
+      $('status').textContent = error.message;
+      button.disabled = !$('recordingSelect').value;
+    }
   }
 
   function rebuildTrackOptions() {
@@ -176,17 +208,15 @@
   function draw2d(frame) {
     const {w,h}=resizeCanvas(); clear(w,h);
     const imageW=640,imageH=480, sx=w/imageW, sy=h/imageH;
-    const cols=64,rows=48, heat=new Float32Array(cols*rows);
+    const heatCellPx=20, cols=Math.ceil(imageW/heatCellPx), rows=Math.ceil(imageH/heatCellPx);
+    const heat=new Float32Array(cols*rows);
     let peak=1;
     const frameStride=Math.max(1,Math.floor((index+1)/2000));
     for (let fi=0; fi<=index; fi+=frameStride) {
       const f=frames[fi], map=assignmentMap(f);
       (f.measurements || []).forEach((m,di) => {
         const id=map.get(di); if (!measurementVisible(map,di)) return;
-        const c=m.center; if (!c) return;
-        const x=Math.max(0,Math.min(cols-1,Math.floor(c[0]/imageW*cols)));
-        const y=Math.max(0,Math.min(rows-1,Math.floor(c[1]/imageH*rows)));
-        heat[y*cols+x] += 1; peak=Math.max(peak,heat[y*cols+x]);
+        addHeatForMeasurement(m);
       });
     }
     const cw=w/cols,ch=h/rows;
@@ -200,6 +230,40 @@
       ctx.strokeStyle=color; ctx.lineWidth=2; ctx.strokeRect(x1*sx,y1*sy,(x2-x1)*sx,(y2-y1)*sy);
       ctx.fillStyle=color; ctx.font='bold 13px ui-monospace'; ctx.fillText(id ? `T${id}` : 'unmatched',x1*sx+3,Math.max(14,y1*sy-4));
     });
+
+    function addHeatForMeasurement(m) {
+      const box = normalizedBox(m.bbox);
+      if (box) {
+        const [left, top, right, bottom] = box;
+        const minX = clamp(Math.floor(left / imageW * cols), 0, cols - 1);
+        const maxX = clamp(Math.floor((right - 1) / imageW * cols), 0, cols - 1);
+        const minY = clamp(Math.floor(top / imageH * rows), 0, rows - 1);
+        const maxY = clamp(Math.floor((bottom - 1) / imageH * rows), 0, rows - 1);
+        for (let y=minY; y<=maxY; y++) {
+          for (let x=minX; x<=maxX; x++) addHeat(x, y);
+        }
+        return;
+      }
+      const c=m.center; if (!c) return;
+      const x=clamp(Math.floor(Number(c[0])/imageW*cols),0,cols-1);
+      const y=clamp(Math.floor(Number(c[1])/imageH*rows),0,rows-1);
+      addHeat(x, y);
+    }
+    function normalizedBox(bbox) {
+      if (!Array.isArray(bbox) || bbox.length !== 4) return null;
+      const values=bbox.map(Number);
+      if (!values.every(Number.isFinite)) return null;
+      const left=clamp(Math.min(values[0],values[2]),0,imageW);
+      const right=clamp(Math.max(values[0],values[2]),0,imageW);
+      const top=clamp(Math.min(values[1],values[3]),0,imageH);
+      const bottom=clamp(Math.max(values[1],values[3]),0,imageH);
+      return right > left && bottom > top ? [left,top,right,bottom] : null;
+    }
+    function addHeat(x, y) {
+      const offset=y*cols+x;
+      heat[offset] += 1;
+      peak=Math.max(peak,heat[offset]);
+    }
   }
 
   function allPositions() {
@@ -271,6 +335,7 @@
   $('mode2d').addEventListener('click',()=>{mode='2d';$('mode2d').classList.add('active');$('mode3d').classList.remove('active');render();});
   $('mode3d').addEventListener('click',()=>{mode='3d';$('mode3d').classList.add('active');$('mode2d').classList.remove('active');render();});
   $('reprocessButton').addEventListener('click',reprocess);
+  $('deleteRecordingButton').addEventListener('click',deleteRecording);
   window.addEventListener('resize',render);
   loadCatalog();
 })();

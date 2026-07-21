@@ -17,6 +17,7 @@ class TrackReplayUiContractTests(unittest.TestCase):
             "recordingSelect", "trackSelect", "pauseButton", "mode2d", "mode3d",
             "confirmHits", "gateDistance", "maxMisses", "deleteAfter",
             "processNoise", "confidenceDecay", "reprocessButton",
+            "deleteRecordingButton",
         ):
             self.assertIn(f'id="{control_id}"', html)
 

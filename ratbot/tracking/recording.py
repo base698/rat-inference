@@ -303,6 +303,24 @@ class TrackRecordingStore:
                 recordings.append(metadata)
         return sorted(recordings, key=lambda item: str(item.get("started_at", "")), reverse=True)
 
+    def delete(self, recording_id: str) -> dict[str, object]:
+        self._ensure_available()
+        with self._lock:
+            if self._active is not None and self._active.get("id") == recording_id:
+                raise RuntimeError("stop the active recording before deleting it")
+            session_dir = self._session_dir(recording_id)
+            metadata: dict[str, object] = {"id": recording_id}
+            try:
+                metadata = self._read_metadata(session_dir / "metadata.json")
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+            shutil.rmtree(session_dir)
+            return {
+                "success": True,
+                "id": recording_id,
+                "frame_count": metadata.get("frame_count", 0),
+            }
+
     def load(self, recording_id: str) -> dict[str, object]:
         self._ensure_available()
         with self._lock:

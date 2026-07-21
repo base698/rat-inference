@@ -411,11 +411,16 @@ run_logs/tracks/<recording-id>/
   observations.jsonl
 ```
 
+`./run.sh rt200` mounts `run_logs/` into Docker, so recordings survive container
+restarts and can be cleaned up from the host or the replay UI.
+
 Open `/tracks` for the replay workbench. It provides:
 
 - recording and stable-track dropdowns;
 - pause/play plus `0.1×`, `0.25×`, `0.5×`, `0.75×`, `1×`, `1.5×`, and `2×` speeds;
-- an image-space 2D heatmap with current bounding boxes and associated track IDs;
+- a delete control for saved recording sessions;
+- an image-space 2D heatmap that accumulates bounding-box footprints, with
+  current bounding boxes and associated track IDs;
 - a fixed turret-base 3D view with tracks, trails, measurements, velocity vectors,
   and `x forward / y left / z up` axes;
 - parameterized reprocessing using saved raw 3D observations. Confirmation hits,
@@ -430,6 +435,7 @@ Routes:
   lifecycle, confidence, selection, and last bounding box.
 - `GET /api/track-recordings` and `GET /api/track-recordings/{id}` — catalog and replay data.
 - `POST /api/track-recordings/start` / `stop` — recording lifecycle.
+- `DELETE /api/track-recordings/{id}` — remove one saved recording session.
 - `POST /api/track-recordings/{id}/reprocess` — rerun tracker parameters from observations.
 - `POST /tracks/select` with `{"track_id": 3}` — explicitly select an ID.
 - `POST /tracks/clear-selection` — stop autonomous aiming without deleting

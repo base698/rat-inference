@@ -1019,6 +1019,9 @@ class CameraTracker:
     def load_track_recording(self, recording_id):
         return self.track_recordings.load(recording_id)
 
+    def delete_track_recording(self, recording_id):
+        return self.track_recordings.delete(recording_id)
+
     def reprocess_track_recording(self, recording_id, parameters):
         return self.track_recordings.reprocess(recording_id, parameters)
 

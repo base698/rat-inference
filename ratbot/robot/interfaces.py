@@ -67,6 +67,10 @@ class TrackerRobot(Protocol):
         """Load one replay session."""
         ...
 
+    def delete_track_recording(self, recording_id: str) -> dict[str, object]:
+        """Delete one saved replay session."""
+        ...
+
     def reprocess_track_recording(
         self, recording_id: str, parameters: Mapping[str, object]
     ) -> dict[str, object]:
