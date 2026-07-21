@@ -23,6 +23,10 @@ class TrackReplayUiContractTests(unittest.TestCase):
             self.assertIn(f'id="{control_id}"', html)
         self.assertIn("const clamp =", script)
         self.assertIn("function validPoint", script)
+        self.assertIn("function recordingImageSize", script)
+        self.assertIn("parameters.image_width", script)
+        self.assertIn("parameters.image_height", script)
+        self.assertNotIn("const imageW=640,imageH=480", script)
         self.assertIn("const replayFps =", script)
         self.assertIn("playbackStartIndex", script)
 

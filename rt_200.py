@@ -967,6 +967,10 @@ class CameraTracker:
             "recorded_at": datetime.now().astimezone().isoformat(),
             "monotonic_time": timestamp,
             "control_monotonic_time": time.monotonic(),
+            "image_size": {
+                "width": self.camera_width,
+                "height": self.camera_height,
+            },
             "pose_raw": {"yaw": yaw_raw, "pitch": pitch_raw},
             "commanded_pose_raw": {
                 "yaw": self.current_yaw,
@@ -1039,6 +1043,8 @@ class CameraTracker:
             "process_acceleration_std_mm_s2": config.process_acceleration_std_mm_s2,
             "confidence_decay": config.confidence_decay,
             "min_depth_confidence": self.world_min_depth_confidence,
+            "image_width": self.camera_width,
+            "image_height": self.camera_height,
         }
 
     def get_track_recording_status(self):

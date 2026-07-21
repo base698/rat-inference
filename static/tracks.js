@@ -21,6 +21,43 @@
       ? clamp((frames.length - 1) / duration, 1, 60)
       : 10;
   };
+  const positiveNumber = value => {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : null;
+  };
+  function recordingImageSize(frame = null) {
+    const metadata = replay?.metadata || {};
+    const parameters = metadata.parameters || {};
+    const directSize = metadata.image_size || parameters.image_size || frame?.image_size || {};
+    const width = positiveNumber(
+      directSize.width ?? metadata.image_width ?? parameters.image_width
+    );
+    const height = positiveNumber(
+      directSize.height ?? metadata.image_height ?? parameters.image_height
+    );
+    if (width && height) return {width, height};
+    return inferImageSize();
+  }
+  function inferImageSize() {
+    let maxX = 0, maxY = 0;
+    frames.forEach(frame => {
+      (frame.measurements || []).forEach(measurement => {
+        const bbox = measurement.bbox;
+        if (Array.isArray(bbox) && bbox.length === 4) {
+          maxX = Math.max(maxX, Number(bbox[0]) || 0, Number(bbox[2]) || 0);
+          maxY = Math.max(maxY, Number(bbox[1]) || 0, Number(bbox[3]) || 0);
+        }
+        const center = measurement.center;
+        if (Array.isArray(center) && center.length >= 2) {
+          maxX = Math.max(maxX, Number(center[0]) || 0);
+          maxY = Math.max(maxY, Number(center[1]) || 0);
+        }
+      });
+    });
+    const sizes = [[640,480], [960,720], [1280,960], [1920,1080]];
+    const match = sizes.find(([width, height]) => maxX <= width && maxY <= height);
+    return match ? {width: match[0], height: match[1]} : {width: 640, height: 480};
+  }
 
   async function jsonFetch(url, options) {
     const response = await fetch(url, options);
@@ -225,7 +262,7 @@
 
   function draw2d(frame) {
     const {w,h}=resizeCanvas(); clear(w,h);
-    const imageW=640,imageH=480, sx=w/imageW, sy=h/imageH;
+    const imageSize=recordingImageSize(frame), imageW=imageSize.width, imageH=imageSize.height, sx=w/imageW, sy=h/imageH;
     const heatCellPx=20, cols=Math.ceil(imageW/heatCellPx), rows=Math.ceil(imageH/heatCellPx);
     const heat=new Float32Array(cols*rows);
     let peak=1;
@@ -344,7 +381,8 @@
       : 0;
     $('measurementMetric').textContent=visibleMeasurements;
     $('selectedMetric').textContent=frame?.selected_track_id ?? '—';
-    $('frameBadge').textContent=frame ? `${mode.toUpperCase()} · ${frame.recorded_at || ''}` : 'No recording loaded';
+    const imageSize=frame ? recordingImageSize(frame) : null;
+    $('frameBadge').textContent=frame ? `${mode.toUpperCase()} · ${imageSize.width}x${imageSize.height} · ${frame.recorded_at || ''}` : 'No recording loaded';
   }
   const formatSeconds=value=>`${Math.max(0,Number(value)||0).toFixed(2)}s`;
 
