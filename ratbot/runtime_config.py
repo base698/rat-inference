@@ -200,6 +200,7 @@ def build_argument_parser(
         "stereo": "Enable stereo mode for depth estimation (requires stereo calibration)",
         "baseline_override": "Override stereo baseline in mm (use if calibration baseline is incorrect)",
         "world_tracking": "Enable opt-in multi-target tracking in the fixed turret-base 3D frame",
+        "disable_world_tracking": "Force angular belief tracking even when config.yaml enables world-frame tracking",
         "enable_trigger": "Enable GPIO trigger servo",
         "api_host": "Host for FastAPI server",
         "api_port": "Port for FastAPI server",
@@ -370,6 +371,7 @@ def build_argument_parser(
         action="store_true",
         default=_strict_bool(world, "enabled"),
     )
+    parser.add_argument("--disable-world-tracking", action="store_true")
     parser.add_argument("--enable-trigger", action="store_true")
     parser.add_argument("--api-host", type=str, default="0.0.0.0")
     parser.add_argument("--api-port", type=int, default=8000)
@@ -423,6 +425,7 @@ def parse_runtime_config(
     model_path = None
     if args.enable_camera and not args.disable_detection:
         model_path = args.model
+    world_tracking_enabled = args.world_tracking and not args.disable_world_tracking
 
     tracker = TrackerRuntimeConfig(
         port=args.port,
@@ -446,7 +449,7 @@ def parse_runtime_config(
         inference_fps=args.inference_fps,
         target_classes=tuple(target_classes),
         calibration_file=calibration,
-        stereo_mode=args.stereo or args.world_tracking,
+        stereo_mode=args.stereo or world_tracking_enabled,
         baseline_override=args.baseline_override,
         tracking_smoothing=args.tracking_smoothing,
         max_yaw_step=args.max_yaw_step,
@@ -475,7 +478,7 @@ def parse_runtime_config(
         belief_max_pitch_velocity_raw_per_s=(
             args.belief_max_pitch_velocity_raw_per_s
         ),
-        world_tracking=args.world_tracking,
+        world_tracking=world_tracking_enabled,
         world_gate_distance_mm=float(world.get("gate_distance_mm", 750.0)),
         world_confirm_hits=int(world.get("confirm_hits", 3)),
         world_max_misses=int(world.get("max_misses", 5)),

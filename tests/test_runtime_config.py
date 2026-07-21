@@ -95,6 +95,7 @@ EXPECTED_HELP = {
     "stereo": "Enable stereo mode for depth estimation (requires stereo calibration)",
     "baseline_override": "Override stereo baseline in mm (use if calibration baseline is incorrect)",
     "world_tracking": "Enable opt-in multi-target tracking in the fixed turret-base 3D frame",
+    "disable_world_tracking": "Force angular belief tracking even when config.yaml enables world-frame tracking",
     "enable_trigger": "Enable GPIO trigger servo",
     "api_host": "Host for FastAPI server",
     "api_port": "Port for FastAPI server",
@@ -201,6 +202,25 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertFalse(enabled.world_api_selection_enabled)
         self.assertFalse(enabled.world_actuation_enabled)
         self.assertFalse(enabled.world_calibration_validated)
+
+    def test_disable_world_tracking_overrides_config_default(self):
+        raw = {
+            "tracking": {
+                "world_frame": {
+                    "enabled": True,
+                }
+            }
+        }
+
+        runtime = parse_runtime_config(
+            argv=["--disable-world-tracking"],
+            raw_config=raw,
+            inference_fps_default=20,
+            path_exists=lambda path: False,
+        )
+
+        self.assertFalse(runtime.tracker.world_tracking)
+        self.assertFalse(runtime.tracker.stereo_mode)
 
     def test_world_safety_booleans_reject_string_values_fail_closed(self):
         for key in (

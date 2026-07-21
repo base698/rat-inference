@@ -70,8 +70,8 @@ run_rt200() {
             --use-csi \
             --camera-id 0 \
             --stereo \
-            --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-            --baseline-override 51.1 \
+            --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+            --baseline-override 52.5 \
             --confidence 0.70 \
             --device 0 \
             --inference-fps 20 \

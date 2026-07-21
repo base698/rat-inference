@@ -36,8 +36,8 @@ tracking:
 
   # Base crosshair position
   crosshair:
-    x_base: 290      # Base X position at yaw center (2200)
-    y_base: 371      # Base Y position shifted down another 14px to align laser/crosshair
+    x_base: 435      # Base X position at yaw center (2200)
+    y_base: 557      # Base Y position shifted down another 14px to align laser/crosshair
 
   # Yaw compensation - adjusts crosshair X based on yaw angle
   # As yaw increases (camera pans right), crosshair X position changes
@@ -45,8 +45,8 @@ tracking:
     enabled: true
     yaw_min: 1600          # Minimum yaw value
     yaw_max: 3100          # Maximum yaw value
-    x_offset_at_min: 7.0  # X offset when yaw = yaw_min 
-    x_offset_at_max: -7.0 # X offset when yaw = yaw_max 
+    x_offset_at_min: 10.5  # X offset when yaw = yaw_min
+    x_offset_at_max: -10.5 # X offset when yaw = yaw_max
 
   # Pitch compensation - adjusts crosshair Y based on pitch angle
   # As pitch increases (camera tilts down), crosshair Y position changes
@@ -54,19 +54,19 @@ tracking:
     enabled: true
     pitch_min: 100         # Pitch value with no Y adjustment
     pitch_max: 550         # Pitch value with maximum Y adjustment
-    y_offset_at_min: -33.8 # Y offset when pitch = pitch_min (adjust up by 33.8px)
-    y_offset_at_max: -30.0 # Fallback endpoint; points below are used when present
+    y_offset_at_min: -50.7 # Y offset when pitch = pitch_min (adjust up by 33.8px)
+    y_offset_at_max: -45.0 # Fallback endpoint; points below are used when present
     points:
       - pitch: 100
-        offset: -33.8
+        offset: -50.7
       - pitch: 240
-        offset: -18.9
+        offset: -28.4
       - pitch: 250
-        offset: -17.8
+        offset: -26.7
       - pitch: 415
-        offset: -21.2
+        offset: -31.8
       - pitch: 550
-        offset: -30.0
+        offset: -45.0
 
   # Depth-based crosshair compensation for laser/camera vertical separation.
   # Positive laser_vertical_offset_mm means the laser exits below the camera center.
@@ -75,7 +75,7 @@ tracking:
     enabled: true
     laser_vertical_offset_mm: 55.0
     reference_distance_mm: 1000.0
-    max_adjust_px: 80.0
+    max_adjust_px: 120.0
 
   # Detection snapshots are useful for debugging, but saving every hit can
   # dominate inference time and fill disk quickly during live tracking.
@@ -86,19 +86,16 @@ tracking:
     max_files: 1000
     prune_interval_seconds: 300.0
 
-  crosshair_size: 20   # Size of crosshair in pixels
+  crosshair_size: 30   # Size of crosshair in pixels
 
   # Auto tracking smoothing
   # Detections update an angular target belief; a separate control loop moves toward it.
-  # max_*_step caps per-control-tick servo jumps as a fallback.
-  # max_*_speed_raw_per_s caps motion by time so higher control FPS uses smaller steps.
+  # max_*_step caps per-control-tick servo jumps in raw units to reduce jerky motion.
   auto_tracking:
     smoothing_alpha: 0.45
-    max_yaw_step: 45
-    max_pitch_step: 35
-    max_yaw_speed_raw_per_s: 900
-    max_pitch_speed_raw_per_s: 700
-    control_fps: 60
+    max_yaw_step: 35
+    max_pitch_step: 22
+    control_fps: 20
     belief_update_alpha: 0.75
     belief_pitch_update_alpha: 0.35
     belief_miss_decay: 0.90
@@ -111,7 +108,6 @@ tracking:
     belief_reseed_confirmations: 2
     belief_reseed_match_distance_raw: 120
     belief_reseed_max_interval: 0.8
-    belief_reseed_min_confidence: 0.55
     belief_velocity_alpha: 0.45
     belief_pitch_velocity_alpha: 0.25
     belief_velocity_decay: 0.96
@@ -119,14 +115,13 @@ tracking:
     belief_max_pitch_velocity_raw_per_s: 180
     belief_max_prediction_age: 0.45
 
-  # Opt-in 3D multi-target tracking in the fixed turret-base frame.
-  # Keep disabled until servo direction signs and camera-to-pivot extrinsics pass
-  # the stationary-target pan/tilt calibration described in README.md.
+  # 3D multi-target tracking in the fixed turret-base frame.
+  # Current test config enables world-frame actuation on a trusted LAN.
   world_frame:
-    enabled: false
+    enabled: true
     # World-frame computation is shadow-only unless both gates are true.
-    actuation_enabled: false
-    calibration_validated: false
+    actuation_enabled: true
+    calibration_validated: true
     gate_distance_mm: 750.0
     confirm_hits: 3
     max_misses: 5
@@ -146,10 +141,10 @@ tracking:
     log_path: null       # Legacy always-on replay JSONL path (optional)
     recordings_dir: run_logs/tracks  # Start/stop UI recordings, one directory per session
     # Recording mutates state and writes disk. Enable only on a trusted LAN.
-    allow_remote_recording: false
+    allow_remote_recording: true
     # Mutating track-selection routes are unauthenticated; keep disabled unless
     # the API is isolated to a trusted interface/network.
-    allow_remote_selection: false
+    allow_remote_selection: true
 
   # Frame rates
   video_fps: 30        # Camera/video frame rate
@@ -159,8 +154,8 @@ tracking:
 camera:
   fov_horizontal: 60.0   # Horizontal field of view in degrees
   fov_vertical: 45.0     # Vertical field of view in degrees
-  width: 640             # Image width in pixels
-  height: 480            # Image height in pixels
+  width: 960             # Image width in pixels
+  height: 720            # Image height in pixels
 
 # PID Controller Gains
 pid:
@@ -179,7 +174,7 @@ pid:
 # Detection Configuration
 detection:
   confidence_threshold: 0.70
-  imgsz: 640
+  imgsz: 960
   device: "0"       # YOLO inference device: "0"/"cuda:0" for CUDA, "cpu" for CPU, "auto" for Ultralytics default
   model_path: "runs/yolo11n-2025-10-23/weights/best.engine"
   target_classes:

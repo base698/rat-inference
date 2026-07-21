@@ -120,14 +120,10 @@ uv run python tools/vision/inference/inference.py --input image.jpg --model runs
 
 ### 4. Real-time Tracking (Jetson Nano)
 
-The recommended live robot mode is the default **angular belief** tracker. It
-uses image detections to maintain a yaw/pitch belief and then drives the servos
-toward that belief. This is the path to use for normal rat/can tracking.
-
-Do **not** add `--world-tracking` for normal tracking yet. The multi-target
-world-frame tracker is useful for visualization and experiments, but it is still
-in progress and currently loses or churns target IDs more often than the angular
-belief tracker.
+The current robot test configuration uses the **world-frame tracker** by default
+so we can evaluate multi-target identity, 3D visualization, and world-state
+actuation together. The older **angular belief** tracker is still available for
+A/B testing and can be forced with `--disable-world-tracking`.
 
 Run the real-time camera tracker with servo control:
 
@@ -137,57 +133,47 @@ uv run --extra jetson python rt_200.py \
   --enable-camera \
   --use-csi \
   --stereo \
-  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 51.1 \
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5 \
   --port /dev/ttyACM0
 
-# With larger inference size (1024px) - slower but more accurate
+# Force angular belief tracking with the same camera/model config
 uv run --extra jetson python rt_200.py \
   --enable-camera \
   --use-csi \
   --stereo \
-  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 51.1 \
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5 \
   --port /dev/ttyACM0 \
   --device 0 \
-  --imgsz 1024 \
-  --inference-fps 4
+  --disable-world-tracking
 
 # Web interface only (no servos)
-uv run python rt_200.py --no-connect --enable-camera --use-csi
+uv run python rt_200.py --no-connect --enable-camera --use-csi --disable-world-tracking
 ```
 
 The custom rat models currently expose a single YOLO class named `item`, not `rat`. The TensorRT engine may report that same single class as `class0` if metadata is missing. By default, `config.yaml` sets `target_classes: [item, class0]`; omit `--target-class` to use the configured target, or pass `--target-class all` to accept every class from the loaded model.
 
-Current preferred rat auto-tracking command:
+Current rat model command:
 
 ```bash
 uv run --extra jetson python rt_200.py \
   --enable-camera \
   --use-csi \
   --stereo \
-  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 51.1 \
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5 \
   --port /dev/ttyACM0 \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.70 \
   --device 0 \
-  --inference-fps 20 \
-  --tracking-control-fps 60 \
-  --belief-update-alpha 0.75 \
-  --max-yaw-step 45 \
-  --max-pitch-step 35 \
-  --max-yaw-speed-raw-per-s 900 \
-  --max-pitch-speed-raw-per-s 700 \
-  --pitch-tracking-scale 2.2 \
-  --belief-reseed-distance-raw 160 \
-  --belief-reseed-min-confidence 0.55
+  --inference-fps 20
 ```
 
 The same default path is what `./run.sh rt200` is intended to start on the
 Jetson: CSI stereo camera input, TensorRT model inference, Feetech servos, and
-angular-belief tracking. Keep world tracking opt-in until its target identity and
-reacquisition behavior are reliable enough for normal use.
+world-frame tracking. Add `--disable-world-tracking` to use the angular belief
+controller against the same camera/model setup.
 
 For raw COCO object tests such as a can, bottle, or cup, keep the same CUDA
 device setting and override only the model/target classes:
@@ -199,6 +185,18 @@ device setting and override only the model/target classes:
   --target-class cup \
   --confidence 0.30 \
   --device 0
+```
+
+Angular comparison mode for the same raw COCO object test:
+
+```bash
+./run.sh rt200 \
+  --model yolo11n.pt \
+  --target-class bottle \
+  --target-class cup \
+  --confidence 0.30 \
+  --device 0 \
+  --disable-world-tracking
 ```
 
 ### Monitoring
@@ -371,22 +369,21 @@ uv run --extra jetson python tools/vision/calibration/calibrate_camera.py \
 The current recalibration produced:
 
 ```text
-Left RMS: 0.065px
-Right RMS: 0.046px
-Stereo RMS: 1.486px
-Solved baseline: 42.61mm
-Physical lens spacing: 57.5mm
-Current effective baseline override: 51.1mm
+Stereo RMS: 0.810px
+Solved baseline: 41.64mm
+Physical lens spacing: 52.5mm
+Current effective baseline override: 52.5mm
 ```
 
 Stereo RMS is usable for testing but still high; a rigid printed target and more varied poses should improve it.
 
-## Experimental Multi-Target World-Frame Tracking (In Progress, Opt-In)
+## Experimental Multi-Target World-Frame Tracking (In Progress)
 
-This mode is **not** the recommended default tracker. Use the angular belief
-tracker above for normal live tracking.
+The current test config enables this mode by default so live robot testing can
+exercise world-state actuation and visualization. Use `--disable-world-tracking`
+to compare against the angular belief tracker.
 
-`--world-tracking` enables the new 3D tracker in **shadow mode**. It projects every
+World-frame tracking projects every
 YOLO detection with valid stereo depth into a fixed frame attached to the turret
 base, predicts independent constant-velocity Kalman tracks, and preserves stable
 IDs through short occlusions when the depth and association data are good.
@@ -396,19 +393,17 @@ re-identification pool for `tracking.world_frame.reidentify_after_seconds`
 predicted 3D position and class, the old ID is restored instead of creating a
 new target.
 Current hardware testing shows target IDs can still churn or get lost, so this
-mode should be treated as visualization/research work rather than production
-tracking. Shadow mode computes, overlays, exposes, and logs tracks but does not
-connect them to servo actuation. The main-page World View uses the vendored
+mode should still be treated as in-progress. The main-page World View uses the vendored
 `/static/vendor/three.module.js` renderer so robot testing does not depend on a
 browser CDN request.
 
 ```bash
-python3 rt_200.py --enable-camera --stereo --world-tracking
+python3 rt_200.py --enable-camera --stereo
+python3 rt_200.py --enable-camera --stereo --disable-world-tracking
 ```
 
-This mode is deliberately **disabled by default**, and world-frame actuation has
-an additional fail-closed gate. It is enabled only when both of these values are
-set after completing the hardware acceptance procedure:
+World-frame actuation has additional fail-closed gates. It is enabled only when
+these values are set after completing the hardware acceptance procedure:
 
 ```yaml
 tracking:
