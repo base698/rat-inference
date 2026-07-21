@@ -8,6 +8,12 @@ from ratbot.runtime_config import build_argument_parser, parse_runtime_config
 
 
 RAW_CONFIG = {
+    "camera": {
+        "fov_horizontal": 60.0,
+        "fov_vertical": 45.0,
+        "width": 960,
+        "height": 720,
+    },
     "detection": {
         "model_path": "configured.engine",
         "confidence_threshold": 0.7,
@@ -112,6 +118,10 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(tracker.model_path, None)
         self.assertEqual(tracker.requested_model, "configured.engine")
         self.assertEqual(tracker.confidence_threshold, 0.7)
+        self.assertEqual(tracker.camera_width, 960)
+        self.assertEqual(tracker.camera_height, 720)
+        self.assertEqual(tracker.camera_fov_horizontal, 60.0)
+        self.assertEqual(tracker.camera_fov_vertical, 45.0)
         self.assertEqual(tracker.target_classes, ("item", "class0"))
         self.assertEqual(tracker.max_pitch_step, 35)
         self.assertEqual(tracker.belief_pitch_update_alpha, 0.35)

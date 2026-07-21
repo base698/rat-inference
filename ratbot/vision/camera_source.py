@@ -18,6 +18,8 @@ class CameraSource:
         stereo_mode,
         invert_camera,
         video_fps,
+        output_width=640,
+        output_height=480,
         capture_factory=cv2.VideoCapture,
         csi_capture_factory=None,
     ):
@@ -27,6 +29,8 @@ class CameraSource:
         self.stereo_mode = bool(stereo_mode)
         self.invert_camera = bool(invert_camera)
         self.video_fps = video_fps
+        self.output_width = int(output_width)
+        self.output_height = int(output_height)
         self.capture_factory = capture_factory
         self.csi_capture_factory = csi_capture_factory
         self.left = None
@@ -83,51 +87,55 @@ class CameraSource:
         if self.csi_capture_factory is not None:
             self.left = self.csi_capture_factory(
                 sensor_id=0,
-                width=640,
-                height=480,
+                width=self.output_width,
+                height=self.output_height,
                 fps=self.video_fps,
                 flip_method=flip_method,
             )
             self.left.start()
             print(
                 "✓ CSI Camera (left) initialized with subprocess+GStreamer "
-                f"(640x480 @ {self.video_fps} FPS, {flip_status})"
+                f"({self.output_width}x{self.output_height} @ {self.video_fps} FPS, {flip_status})"
             )
             if self.stereo_mode:
                 self.right = self.csi_capture_factory(
                     sensor_id=1,
-                    width=640,
-                    height=480,
+                    width=self.output_width,
+                    height=self.output_height,
                     fps=self.video_fps,
                     flip_method=flip_method,
                 )
                 self.right.start()
                 print(
                     "✓ CSI Camera (right) initialized with subprocess+GStreamer "
-                    f"(640x480 @ {self.video_fps} FPS, {flip_status})"
+                    f"({self.output_width}x{self.output_height} @ {self.video_fps} FPS, {flip_status})"
                 )
             return
 
         left_pipeline = self.gstreamer_pipeline(
             sensor_id=0,
+            display_width=self.output_width,
+            display_height=self.output_height,
             framerate=self.video_fps,
             flip_method=flip_method,
         )
         self.left = self.capture_factory(left_pipeline, cv2.CAP_GSTREAMER)
         print(
             "✓ CSI Camera (left) initialized with GStreamer "
-            f"(640x480 @ {self.video_fps} FPS, {flip_status})"
+            f"({self.output_width}x{self.output_height} @ {self.video_fps} FPS, {flip_status})"
         )
         if self.stereo_mode:
             right_pipeline = self.gstreamer_pipeline(
                 sensor_id=1,
+                display_width=self.output_width,
+                display_height=self.output_height,
                 framerate=self.video_fps,
                 flip_method=flip_method,
             )
             self.right = self.capture_factory(right_pipeline, cv2.CAP_GSTREAMER)
             print(
                 "✓ CSI Camera (right) initialized with GStreamer "
-                f"(640x480 @ {self.video_fps} FPS, {flip_status})"
+                f"({self.output_width}x{self.output_height} @ {self.video_fps} FPS, {flip_status})"
             )
 
     def _initialize_usb(self):
@@ -136,20 +144,20 @@ class CameraSource:
         self._configure_usb(self.left)
         print(
             f"✓ USB Camera (left) {self.camera_id} initialized "
-            f"(640x480 @ {self.video_fps} FPS, {flip_status})"
+            f"({self.output_width}x{self.output_height} @ {self.video_fps} FPS, {flip_status})"
         )
         if self.stereo_mode:
             self.right = self.capture_factory(self.camera_id + 1)
             self._configure_usb(self.right)
             print(
                 f"✓ USB Camera (right) {self.camera_id + 1} initialized "
-                f"(640x480 @ {self.video_fps} FPS, {flip_status})"
+                f"({self.output_width}x{self.output_height} @ {self.video_fps} FPS, {flip_status})"
             )
 
     def _configure_usb(self, camera):
         camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.output_width)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.output_height)
         camera.set(cv2.CAP_PROP_FPS, self.video_fps)
 
     def read_frames(self):
@@ -176,12 +184,12 @@ class CameraSource:
             if frame_right is not None:
                 frame_right = cv2.rotate(frame_right, cv2.ROTATE_180)
 
-        if frame.shape[1] != 640 or frame.shape[0] != 480:
-            frame = cv2.resize(frame, (640, 480))
+        if frame.shape[1] != self.output_width or frame.shape[0] != self.output_height:
+            frame = cv2.resize(frame, (self.output_width, self.output_height))
         if frame_right is not None and (
-            frame_right.shape[1] != 640 or frame_right.shape[0] != 480
+            frame_right.shape[1] != self.output_width or frame_right.shape[0] != self.output_height
         ):
-            frame_right = cv2.resize(frame_right, (640, 480))
+            frame_right = cv2.resize(frame_right, (self.output_width, self.output_height))
 
         return frame, frame_right
 

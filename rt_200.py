@@ -191,6 +191,13 @@ else:
     LASER_REFERENCE_DISTANCE_MM = 1000.0
     LASER_MAX_ADJUST_PX = 80.0
 
+# Camera geometry (with config fallback)
+camera_config = CONFIG.get('camera', {}) if CONFIG else {}
+CAMERA_WIDTH = int(camera_config.get('width', 640))
+CAMERA_HEIGHT = int(camera_config.get('height', 480))
+CAMERA_FOV_HORIZONTAL = float(camera_config.get('fov_horizontal', 60.0))
+CAMERA_FOV_VERTICAL = float(camera_config.get('fov_vertical', 45.0))
+
 
 AIMING = CrosshairAiming(
     x_base=TARGET_CROSSHAIR_X_BASE,
@@ -286,6 +293,8 @@ control_api = create_control_app(
         pitch_min=PITCH_MIN,
         pitch_max=PITCH_MAX,
         pitch_center=PITCH_CENTER,
+        camera_width=CAMERA_WIDTH,
+        camera_height=CAMERA_HEIGHT,
         detections_dir=DETECTIONS_DIR,
     ),
     get_target_crosshair_x=get_target_crosshair_x,
@@ -300,7 +309,9 @@ class CameraTracker:
     def __init__(self, port="/dev/cu.usbmodem5A680116511", enable_servos=True,
                  no_connect=False, enable_camera=False, enable_trigger=False,
                  model_path=None, confidence_threshold=0.85, camera_id=0,
-                 use_csi=False, invert_camera=False, imgsz=640,
+                 use_csi=False, invert_camera=False, camera_width=640,
+                 camera_height=480, camera_fov_horizontal=60.0,
+                 camera_fov_vertical=45.0, imgsz=640,
                  inference_fps=None, target_classes=None, calibration_file=None,
                  stereo_mode=False, baseline_override=None,
                  tracking_smoothing=0.45, max_yaw_step=45, max_pitch_step=45,
@@ -393,10 +404,16 @@ class CameraTracker:
             stereo_mode=stereo_mode,
             invert_camera=invert_camera,
             video_fps=VIDEO_FPS,
+            output_width=camera_width,
+            output_height=camera_height,
             csi_capture_factory=(
                 CSICameraCapture if CSI_HELPER_AVAILABLE else None
             ),
         )
+        self.camera_width = int(camera_width)
+        self.camera_height = int(camera_height)
+        self.camera_fov_horizontal = float(camera_fov_horizontal)
+        self.camera_fov_vertical = float(camera_fov_vertical)
         self.model = None
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
@@ -527,10 +544,10 @@ class CameraTracker:
 
         self.observation_converter = TrackingObservationConverter(
             config=ObservationConfig(
-                image_width=640,
-                image_height=480,
-                horizontal_fov_degrees=60.0,
-                vertical_fov_degrees=45.0,
+                image_width=self.camera_width,
+                image_height=self.camera_height,
+                horizontal_fov_degrees=self.camera_fov_horizontal,
+                vertical_fov_degrees=self.camera_fov_vertical,
                 yaw_min=YAW_MIN,
                 yaw_max=YAW_MAX,
                 pitch_min=PITCH_MIN,

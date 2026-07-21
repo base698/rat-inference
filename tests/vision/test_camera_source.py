@@ -171,6 +171,25 @@ class CameraSourceTests(unittest.TestCase):
         np.testing.assert_array_equal(actual_left, expected_left)
         np.testing.assert_array_equal(actual_right, expected_right)
 
+    def test_read_frames_resizes_to_configured_output_size(self):
+        frame = np.zeros((2, 3, 3), dtype=np.uint8)
+        source = CameraSource(
+            enabled=True,
+            camera_id=0,
+            use_csi=False,
+            stereo_mode=False,
+            invert_camera=False,
+            video_fps=30,
+            output_width=960,
+            output_height=720,
+        )
+        source.left = FakeCapture(frame)
+        source.active = True
+
+        actual, _ = source.read_frames()
+
+        self.assertEqual(actual.shape, (720, 960, 3))
+
     def test_right_read_failure_keeps_left_frame(self):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         source = CameraSource(

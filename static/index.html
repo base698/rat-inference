@@ -589,7 +589,9 @@
             PITCH_MAX: 500,
             PITCH_CENTER: 250,
             TARGET_CROSSHAIR_X: 291,
-            TARGET_CROSSHAIR_Y: 199
+            TARGET_CROSSHAIR_Y: 199,
+            CAMERA_WIDTH: 640,
+            CAMERA_HEIGHT: 480
         };
 
         let yawValue = CONFIG.YAW_CENTER;
@@ -626,6 +628,10 @@
                 enableTrigger = config.enable_trigger;
                 worldTracking = Boolean(config.world_tracking);
                 recordingEnabled = Boolean(config.track_recording_enabled);
+
+                const cameraCanvas = document.getElementById('cameraStream');
+                cameraCanvas.width = Number(CONFIG.CAMERA_WIDTH) || 640;
+                cameraCanvas.height = Number(CONFIG.CAMERA_HEIGHT) || 480;
 
                 // Update slider values and ranges
                 const yawSlider = document.getElementById('yawSlider');
@@ -1294,7 +1300,7 @@
             const x = event.clientX - rect.left;
             const y = event.clientY - rect.top;
 
-            // Scale to actual canvas size (640x480)
+            // Scale to the actual camera canvas size.
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
             const canvasX = x * scaleX;

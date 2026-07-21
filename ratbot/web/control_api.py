@@ -93,6 +93,8 @@ class ControlApiConfig:
     pitch_min: int
     pitch_max: int
     pitch_center: int
+    camera_width: int = 640
+    camera_height: int = 480
     static_dir: str = "static"
     detections_dir: str = "detections"
 
@@ -157,6 +159,8 @@ class TrackerControlApi:
                 "PITCH_CENTER": self.config.pitch_center,
                 "TARGET_CROSSHAIR_X": self._get_target_crosshair_x(initial_yaw),
                 "TARGET_CROSSHAIR_Y": self._get_target_crosshair_y(initial_pitch),
+                "CAMERA_WIDTH": self.config.camera_width,
+                "CAMERA_HEIGHT": self.config.camera_height,
                 "initial_yaw": initial_yaw,
                 "initial_pitch": initial_pitch,
                 "enable_trigger": tracker.trigger_servo_enabled if tracker else False,

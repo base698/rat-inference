@@ -26,6 +26,10 @@ class TrackerRuntimeConfig:
     camera_id: int
     use_csi: bool
     invert_camera: bool
+    camera_width: int
+    camera_height: int
+    camera_fov_horizontal: float
+    camera_fov_vertical: float
     imgsz: int
     inference_fps: float | None
     target_classes: tuple[str, ...]
@@ -106,6 +110,11 @@ def _sections(raw_config: Mapping[str, Any] | None):
 def _world_section(raw_config: Mapping[str, Any] | None) -> Mapping[str, Any]:
     raw_config = raw_config or {}
     return raw_config.get("tracking", {}).get("world_frame", {})
+
+
+def _camera_section(raw_config: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    raw_config = raw_config or {}
+    return raw_config.get("camera", {})
 
 
 def _strict_bool(
@@ -365,6 +374,7 @@ def parse_runtime_config(
     )
     args = parser.parse_args(argv)
     detection, _ = _sections(raw_config)
+    camera = _camera_section(raw_config)
     world = _world_section(raw_config)
 
     target_classes = args.target_class
@@ -409,6 +419,10 @@ def parse_runtime_config(
         camera_id=args.camera_id,
         use_csi=args.use_csi,
         invert_camera=args.invert_camera,
+        camera_width=int(camera.get("width", 640)),
+        camera_height=int(camera.get("height", 480)),
+        camera_fov_horizontal=float(camera.get("fov_horizontal", 60.0)),
+        camera_fov_vertical=float(camera.get("fov_vertical", 45.0)),
         imgsz=args.imgsz,
         inference_fps=args.inference_fps,
         target_classes=tuple(target_classes),
