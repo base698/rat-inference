@@ -5,9 +5,11 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+import os
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+import rt_200
 from ratbot.robot.belief import ServoBounds
 from ratbot.robot.hardware import (
     TrackingServoController,
@@ -119,6 +121,32 @@ class CameraTrackerHardwareWiringTests(unittest.TestCase):
         self.assertFalse(tracker.connected)
         self.assertFalse(tracker.trigger_servo_enabled)
         tracker.disconnect()
+
+    def test_detection_snapshots_prune_old_files_and_throttle_writes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prior_dir = rt_200.DETECTIONS_DIR
+            rt_200.DETECTIONS_DIR = temp_dir
+            try:
+                old_snapshot = Path(temp_dir) / "detection_old.jpg"
+                old_snapshot.write_bytes(b"old")
+                os.utime(old_snapshot, (0, 0))
+
+                tracker = CameraTracker(
+                    enable_servos=False,
+                    no_connect=True,
+                    enable_camera=False,
+                )
+                self.assertFalse(old_snapshot.exists())
+
+                with patch("rt_200.cv2.imwrite", return_value=True):
+                    first = tracker._save_detection_snapshot(None, now=100.0)
+                    second = tracker._save_detection_snapshot(None, now=101.0)
+
+                self.assertIsNotNone(first)
+                self.assertIsNone(second)
+                tracker.disconnect()
+            finally:
+                rt_200.DETECTIONS_DIR = prior_dir
 
 
 class TriggerServoControllerTests(unittest.TestCase):

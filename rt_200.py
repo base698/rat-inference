@@ -496,6 +496,22 @@ class CameraTracker:
         self.last_inference_fps = 0.0
 
         tracking_config = CONFIG.get('tracking', {}) if CONFIG else {}
+        snapshot_config = tracking_config.get('detection_snapshots', {})
+        self.detection_snapshot_enabled = bool(snapshot_config.get('enabled', True))
+        self.detection_snapshot_min_interval_seconds = max(
+            0.0, float(snapshot_config.get('min_interval_seconds', 2.0))
+        )
+        self.detection_snapshot_max_age_seconds = max(
+            0.0, float(snapshot_config.get('max_age_days', 1.0)) * 86400.0
+        )
+        self.detection_snapshot_max_files = max(
+            0, int(snapshot_config.get('max_files', 1000))
+        )
+        self.detection_snapshot_prune_interval_seconds = max(
+            1.0, float(snapshot_config.get('prune_interval_seconds', 300.0))
+        )
+        self._last_detection_snapshot_time = 0.0
+        self._last_detection_snapshot_prune_time = 0.0
         self.stereo_depth = StereoDepthService(
             calibration_file=calibration_file,
             baseline_override=baseline_override,
@@ -662,6 +678,7 @@ class CameraTracker:
         # Create detections directory
         self.detections_dir = DETECTIONS_DIR
         os.makedirs(self.detections_dir, exist_ok=True)
+        self._prune_detection_snapshots()
 
         # Initialize tracking servos if enabled
         if self.enable_servos and not self.no_connect and FEETECH_AVAILABLE:
@@ -848,6 +865,81 @@ class CameraTracker:
         except Exception as e:
             print(f"Failed to load model: {e}")
             self.model = None
+
+    def _detection_snapshot_files(self):
+        try:
+            names = os.listdir(self.detections_dir)
+        except OSError:
+            return []
+
+        snapshots = []
+        for name in names:
+            if not name.startswith("detection_") or not name.lower().endswith(".jpg"):
+                continue
+            path = os.path.join(self.detections_dir, name)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            if not os.path.isfile(path):
+                continue
+            snapshots.append((stat.st_mtime, path))
+        return snapshots
+
+    def _prune_detection_snapshots(self, now=None):
+        """Delete stale detection snapshots and keep the snapshot directory bounded."""
+        now = time.time() if now is None else float(now)
+        self._last_detection_snapshot_prune_time = now
+        snapshots = self._detection_snapshot_files()
+        if not snapshots:
+            return 0
+
+        deleted = 0
+        kept = []
+        for modified_time, path in snapshots:
+            too_old = (
+                self.detection_snapshot_max_age_seconds > 0
+                and now - modified_time > self.detection_snapshot_max_age_seconds
+            )
+            if too_old:
+                try:
+                    os.remove(path)
+                    deleted += 1
+                except OSError:
+                    pass
+            else:
+                kept.append((modified_time, path))
+
+        if self.detection_snapshot_max_files > 0:
+            overflow = max(0, len(kept) - self.detection_snapshot_max_files)
+            for _, path in sorted(kept)[:overflow]:
+                try:
+                    os.remove(path)
+                    deleted += 1
+                except OSError:
+                    pass
+
+        if deleted:
+            print(f"Pruned {deleted} old detection snapshot(s)")
+        return deleted
+
+    def _save_detection_snapshot(self, frame, now=None):
+        """Save a throttled detection snapshot, returning (filename, path) or None."""
+        if not self.detection_snapshot_enabled:
+            return None
+        now = time.time() if now is None else float(now)
+        if now - self._last_detection_snapshot_time < self.detection_snapshot_min_interval_seconds:
+            return None
+        if now - self._last_detection_snapshot_prune_time >= self.detection_snapshot_prune_interval_seconds:
+            self._prune_detection_snapshots(now=now)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        detection_filename = f"detection_{timestamp}.jpg"
+        detection_path = os.path.join(self.detections_dir, detection_filename)
+        if not cv2.imwrite(detection_path, frame):
+            return None
+        self._last_detection_snapshot_time = now
+        return detection_filename, detection_path
 
 
 
@@ -1267,20 +1359,21 @@ class CameraTracker:
                         f"iqr={stereo_measurement.disparity_iqr_px:.2f}px"
                     )
 
-                # Save detection image
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                detection_filename = f"detection_{timestamp}.jpg"
-                detection_path = os.path.join(self.detections_dir, detection_filename)
-                cv2.imwrite(detection_path, frame)
+                snapshot = self._save_detection_snapshot(frame)
 
                 self.detection_count += 1
                 # Format: "time - message | filename" so the UI can parse and link it
                 depth_str = f" @ {depth_mm/1000.0:.2f}m" if depth_mm else ""
-                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - {class_name} detected (conf: {confidence:.3f}) at ({center_x}, {center_y}){depth_str} | {detection_filename}"
+                detection_msg = f"{datetime.now().strftime('%H:%M:%S')} - {class_name} detected (conf: {confidence:.3f}) at ({center_x}, {center_y}){depth_str}"
+                if snapshot:
+                    detection_msg = f"{detection_msg} | {snapshot[0]}"
                 self.recent_detections.append(detection_msg)
                 self.recent_detections = self.recent_detections[-10:]
 
-                print(f"🎯 Detection #{self.detection_count}: {detection_path}")
+                if snapshot:
+                    print(f"🎯 Detection #{self.detection_count}: {snapshot[1]}")
+                else:
+                    print(f"🎯 Detection #{self.detection_count}: snapshot skipped")
                 print(f"   Class: {class_name}, Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
 
                 # World mode already updated every valid 3D detection above.  The

@@ -77,6 +77,15 @@ tracking:
     reference_distance_mm: 1000.0
     max_adjust_px: 80.0
 
+  # Detection snapshots are useful for debugging, but saving every hit can
+  # dominate inference time and fill disk quickly during live tracking.
+  detection_snapshots:
+    enabled: true
+    min_interval_seconds: 2.0
+    max_age_days: 1.0
+    max_files: 1000
+    prune_interval_seconds: 300.0
+
   crosshair_size: 20   # Size of crosshair in pixels
 
   # Auto tracking smoothing

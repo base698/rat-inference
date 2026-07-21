@@ -208,6 +208,11 @@ FPS, world-track counts by status, selected track ID, and track-recording state.
 The Jetson node exporter runs separately from the Ratbot container so host CPU,
 memory, disk, network, and process metrics continue through Ratbot app restarts.
 
+Detection JPEG snapshots are throttled and pruned by
+`tracking.detection_snapshots` in `config.yaml`. The default saves at most one
+snapshot every 2 seconds, removes snapshots older than 1 day, and keeps at most
+1000 files in `detections/`.
+
 The current CSI helper captures the IMX219 cameras at `1640x1232` and scales to
 the app's `640x480` frame. That gives a wider 4:3 field of view than the old
 `1280x720` input mode while keeping the web/video and inference frame size
