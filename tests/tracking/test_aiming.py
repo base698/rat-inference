@@ -20,12 +20,39 @@ class FakeRobot:
         raw_per_degree=10,
         crosshair_x=320,
         crosshair_y=240,
+        laser_vertical_offset_mm=0.0,
+        laser_offset_enabled=False,
     ):
         self.current_yaw = yaw
         self.current_pitch = pitch
         self.raw_per_degree = raw_per_degree
         self.crosshair_x = crosshair_x
         self.crosshair_y = crosshair_y
+        self.observation_converter = type(
+            "FakeObservationConverter",
+            (),
+            {
+                "config": type(
+                    "FakeObservationConfig",
+                    (),
+                    {"pitch_tracking_scale": 1.0},
+                )(),
+                "aiming": type(
+                    "FakeAiming",
+                    (),
+                    {
+                        "depth": type(
+                            "FakeDepthAiming",
+                            (),
+                            {
+                                "enabled": laser_offset_enabled,
+                                "laser_vertical_offset_mm": laser_vertical_offset_mm,
+                            },
+                        )()
+                    },
+                )(),
+            },
+        )()
         self.stereo_depth = type(
             "FakeStereoDepth",
             (),
@@ -203,6 +230,33 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
 
         self.assertGreater(belief["pitch"], robot.current_pitch)
         self.assertEqual(belief["aim_source"], "world_ray")
+
+    def test_direct_world_ray_can_aim_laser_offset_instead_of_camera_center(self):
+        robot = FakeRobot(
+            yaw=2200,
+            pitch=250,
+            laser_vertical_offset_mm=55.0,
+            laser_offset_enabled=True,
+        )
+        position = self.transformer.camera_to_base(
+            [0, 55, 1000],
+            robot.current_yaw,
+            robot.current_pitch,
+        )
+        self.add_track(position)
+        adapter = WorldTrackBeliefAdapter(
+            self.manager,
+            self.transformer,
+            aim_latency_seconds=0.0,
+            max_age_seconds=1.0,
+            robot=robot,
+            clock=lambda: 10.1,
+        )
+
+        belief = adapter.get_active()
+
+        self.assertAlmostEqual(belief["pitch"], robot.current_pitch, delta=1)
+        self.assertEqual(belief["laser_y_offset_mm"], 55.0)
 
     def test_robot_world_aim_ignores_fresh_center_by_default(self):
         robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)

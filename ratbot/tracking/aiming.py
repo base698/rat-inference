@@ -45,11 +45,20 @@ class WorldTrackBeliefAdapter:
         config = getattr(observation, "config", None)
         return float(getattr(config, "pitch_tracking_scale", 1.0))
 
+    def _laser_vertical_offset_mm(self):
+        observation = getattr(self.robot, "observation_converter", None)
+        aiming = getattr(observation, "aiming", None)
+        depth = getattr(aiming, "depth", None)
+        if depth is None or not getattr(depth, "enabled", False):
+            return 0.0
+        return float(getattr(depth, "laser_vertical_offset_mm", 0.0))
+
     def _optical_axis_aim(self, x, y, z):
         current_yaw = float(self.robot.current_yaw)
         current_pitch = float(self.robot.current_pitch)
+        laser_y_offset_mm = self._laser_vertical_offset_mm()
         yaw_error_degrees = math.degrees(math.atan2(x, z))
-        pitch_error_degrees = math.degrees(math.atan2(y, z))
+        pitch_error_degrees = math.degrees(math.atan2(y - laser_y_offset_mm, z))
         yaw_delta_raw = self.robot.angle_to_servo_raw(yaw_error_degrees, axis="yaw")
         pitch_delta_raw = self.robot.angle_to_servo_raw(
             pitch_error_degrees,
@@ -75,6 +84,7 @@ class WorldTrackBeliefAdapter:
             "yaw_delta_raw": yaw_delta_raw,
             "pitch_delta_raw": pitch_delta_raw,
             "aim_source": "world_ray",
+            "laser_y_offset_mm": laser_y_offset_mm,
         }
 
     def _camera_intrinsics(self):
@@ -227,4 +237,5 @@ class WorldTrackBeliefAdapter:
             "yaw_error_degrees": aim.get("yaw_degrees"),
             "pitch_error_degrees": aim.get("pitch_degrees"),
             "point_camera_mm": aim.get("point_camera_mm"),
+            "laser_y_offset_mm": aim.get("laser_y_offset_mm"),
         }

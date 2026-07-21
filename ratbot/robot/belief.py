@@ -423,11 +423,18 @@ class AngularBeliefController:
         if belief.get("aim_source"):
             point = belief.get("point_camera_mm")
             if point is not None:
+                laser_offset = belief.get("laser_y_offset_mm")
+                laser_debug = (
+                    f" laser_y={float(laser_offset):.0f}mm"
+                    if laser_offset is not None
+                    else ""
+                )
                 aim_debug = (
                     f", aim={belief['aim_source']} "
                     f"cam=({point[0]:.0f},{point[1]:.0f},{point[2]:.0f})mm "
                     f"err=({belief.get('yaw_error_degrees', 0.0):.1f}°, "
                     f"{belief.get('pitch_error_degrees', 0.0):.1f}°)"
+                    f"{laser_debug}"
                 )
             else:
                 aim_debug = f", aim={belief['aim_source']}"
