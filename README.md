@@ -340,7 +340,9 @@ IDs through short occlusions when the depth and association data are good.
 Current hardware testing shows target IDs can still churn or get lost, so this
 mode should be treated as visualization/research work rather than production
 tracking. Shadow mode computes, overlays, exposes, and logs tracks but does not
-connect them to servo actuation.
+connect them to servo actuation. The main-page World View uses the vendored
+`/static/vendor/three.module.js` renderer so robot testing does not depend on a
+browser CDN request.
 
 ```bash
 python3 rt_200.py --enable-camera --stereo --world-tracking

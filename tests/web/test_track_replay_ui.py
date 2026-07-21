@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class TrackReplayUiContractTests(unittest.TestCase):
     def test_replay_ui_exposes_required_modes_speeds_filters_and_tuning(self):
         html = (ROOT / "static" / "tracks.html").read_text(encoding="utf-8")
+        script = (ROOT / "static" / "tracks.js").read_text(encoding="utf-8")
 
         for speed in ("0.1", "0.25", "0.5", "0.75", "1", "1.5", "2"):
             self.assertIn(f'value="{speed}"', html)
@@ -20,6 +21,10 @@ class TrackReplayUiContractTests(unittest.TestCase):
             "deleteRecordingButton",
         ):
             self.assertIn(f'id="{control_id}"', html)
+        self.assertIn("const clamp =", script)
+        self.assertIn("function validPoint", script)
+        self.assertIn("const replayFps =", script)
+        self.assertIn("playbackStartIndex", script)
 
     def test_main_ui_exposes_start_stop_and_replay_link(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -28,6 +33,8 @@ class TrackReplayUiContractTests(unittest.TestCase):
         self.assertIn('id="stopRecordingButton"', html)
         self.assertIn('href="/tracks"', html)
         self.assertIn("/api/track-recordings/${action}", html)
+        self.assertIn("/static/vendor/three.module.js", html)
+        self.assertTrue((ROOT / "static" / "vendor" / "three.module.js").is_file())
 
 
 if __name__ == "__main__":

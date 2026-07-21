@@ -848,9 +848,13 @@
                 return;
             }
             const container = document.getElementById('worldView3d');
+            const status = document.getElementById('worldViewStatus');
             const THREE = window.THREE;
             if (!container || !THREE) {
                 window.pendingWorldViewInit = true;
+                if (status && window.worldViewLoadError) {
+                    status.textContent = 'World View unavailable: 3D renderer failed to load';
+                }
                 return;
             }
 
@@ -860,7 +864,17 @@
             camera.position.set(0, 230, 560);
             camera.lookAt(0, 20, -160);
 
-            const renderer = new THREE.WebGLRenderer({antialias: true});
+            let renderer;
+            try {
+                renderer = new THREE.WebGLRenderer({antialias: true});
+            } catch (error) {
+                console.error('Failed to initialize World View renderer:', error);
+                if (status) {
+                    status.textContent = 'World View unavailable: WebGL renderer failed';
+                }
+                window.worldViewLoadError = error;
+                return;
+            }
             renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
             container.appendChild(renderer.domElement);
 
@@ -1144,10 +1158,18 @@
         };
     </script>
     <script type="module">
-        import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
-        window.THREE = THREE;
-        if (window.pendingWorldViewInit && window.initializeWorldVisualization) {
-            window.initializeWorldVisualization();
+        try {
+            window.THREE = await import('/static/vendor/three.module.js');
+            if (window.pendingWorldViewInit && window.initializeWorldVisualization) {
+                window.initializeWorldVisualization();
+            }
+        } catch (error) {
+            console.error('Failed to load Three.js:', error);
+            window.worldViewLoadError = error;
+            const status = document.getElementById('worldViewStatus');
+            if (status) {
+                status.textContent = 'World View unavailable: 3D renderer failed to load';
+            }
         }
     </script>
 </head>

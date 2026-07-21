@@ -6,14 +6,21 @@
   const colors = ['#50b5ff','#ff7f66','#57d68d','#d58cff','#ffd166','#6ee7e0','#ff8bc2','#a3e635'];
   let recordingId = null, replay = null, frames = [], index = 0, mode = '2d';
   let trackIds = [];
-  let playing = false, speed = 1, animationStart = 0, replayStart = 0;
+  let playing = false, speed = 1, animationStart = 0, playbackStartIndex = 0;
 
   const colorFor = id => colors[(Number(id || 1) - 1) % colors.length];
   const frameTime = frame => Number(frame?.monotonic_time || 0);
   const firstTime = () => frames.length ? frameTime(frames[0]) : 0;
   const lastTime = () => frames.length ? frameTime(frames[frames.length - 1]) : 0;
+  const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
   const selectedTrack = () => $('trackSelect').value;
   const visibleId = id => selectedTrack() === 'all' || Number(selectedTrack()) === Number(id);
+  const replayFps = () => {
+    const duration = lastTime() - firstTime();
+    return Number.isFinite(duration) && duration > 0
+      ? clamp((frames.length - 1) / duration, 1, 60)
+      : 10;
+  };
 
   async function jsonFetch(url, options) {
     const response = await fetch(url, options);
@@ -154,13 +161,20 @@
   function play() {
     if (!frames.length) return;
     if (playing) return;
-    if (index >= frames.length - 1) index = 0;
+    if (index >= frames.length - 1) {
+      index = 0;
+      $('timeline').value = index;
+      render();
+    }
     playing = true;
-    animationStart = performance.now();
-    replayStart = frameTime(frames[index]);
+    resetPlaybackClock();
     $('playButton').classList.add('active');
     $('pauseButton').classList.remove('active');
     requestAnimationFrame(tick);
+  }
+  function resetPlaybackClock() {
+    animationStart = performance.now();
+    playbackStartIndex = index;
   }
   function pause() {
     playing = false;
@@ -169,8 +183,12 @@
   }
   function tick(now) {
     if (!playing) return;
-    const target = replayStart + ((now - animationStart) / 1000) * speed;
-    while (index + 1 < frames.length && frameTime(frames[index + 1]) <= target) index++;
+    const elapsed = Math.max(0, (now - animationStart) / 1000);
+    const nextIndex = Math.min(
+      frames.length - 1,
+      playbackStartIndex + Math.floor(elapsed * replayFps() * speed)
+    );
+    index = nextIndex;
     if (index >= frames.length - 1) pause();
     $('timeline').value = index;
     render();
@@ -270,9 +288,12 @@
     const stride=Math.max(1,Math.floor(frames.length/2000));
     const positions=[];
     for(let fi=0;fi<frames.length;fi+=stride) {
-      (frames[fi].tracks||[]).filter(t=>visibleId(t.id)&&t.position_mm).forEach(t=>positions.push(t.position_mm));
+      (frames[fi].tracks||[]).filter(t=>visibleId(t.id)&&validPoint(t.position_mm)).forEach(t=>positions.push(t.position_mm));
     }
     return positions;
+  }
+  function validPoint(point) {
+    return Array.isArray(point) && point.length === 3 && point.every(value => Number.isFinite(Number(value)));
   }
   function draw3d(frame) {
     const {w,h}=resizeCanvas(); clear(w,h);
@@ -291,7 +312,7 @@
     for(let fi=0;fi<=index;fi+=trailStride){
       for(const track of (frames[fi].tracks||[])){
         const id=Number(track.id);
-        if(visibleIds.has(id)) trails.get(id).push(project(track.position_mm));
+        if(visibleIds.has(id) && validPoint(track.position_mm)) trails.get(id).push(project(track.position_mm));
       }
     }
     trails.forEach((points,id)=>{
@@ -300,15 +321,15 @@
       ctx.stroke();
     });
     const map=assignmentMap(frame);
-    (frame.measurements||[]).forEach((m,di)=>{if(!measurementVisible(map,di)||!m.base_point_mm)return;const q=project(m.base_point_mm);ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(q[0]-4,q[1]-4);ctx.lineTo(q[0]+4,q[1]+4);ctx.moveTo(q[0]+4,q[1]-4);ctx.lineTo(q[0]-4,q[1]+4);ctx.stroke();});
-    (frame.tracks||[]).filter(t=>visibleId(t.id)).forEach(t=>{
+    (frame.measurements||[]).forEach((m,di)=>{if(!measurementVisible(map,di)||!validPoint(m.base_point_mm))return;const q=project(m.base_point_mm);ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(q[0]-4,q[1]-4);ctx.lineTo(q[0]+4,q[1]+4);ctx.moveTo(q[0]+4,q[1]-4);ctx.lineTo(q[0]-4,q[1]+4);ctx.stroke();});
+    (frame.tracks||[]).filter(t=>visibleId(t.id)&&validPoint(t.position_mm)).forEach(t=>{
       const q=project(t.position_mm), color=colorFor(t.id), odd=Number(t.id)%2===1;
       ctx.fillStyle=color; ctx.beginPath(); ctx.arc(q[0],q[1],t.status==='confirmed'?7:5,0,Math.PI*2); ctx.fill();
       const label=`T${t.id} ${t.status}`; ctx.font='bold 12px ui-monospace';
       const labelX=odd?q[0]+10:q[0]-ctx.measureText(label).width-10, labelY=q[1]+(odd?-14:26);
       ctx.fillStyle='rgba(5,7,10,.82)'; ctx.fillRect(labelX-3,labelY-12,ctx.measureText(label).width+6,16);
       ctx.fillStyle=color; ctx.fillText(label,labelX,labelY);
-      if(t.velocity_mm_s){const end=project(t.position_mm.map((v,i)=>v+t.velocity_mm_s[i]*.4));ctx.strokeStyle=color;ctx.lineWidth=2;line(q,end);}
+      if(validPoint(t.velocity_mm_s)){const end=project(t.position_mm.map((v,i)=>Number(v)+Number(t.velocity_mm_s[i])*.4));ctx.strokeStyle=color;ctx.lineWidth=2;line(q,end);}
     });
     function line(a,b){ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();}
   }
@@ -329,7 +350,7 @@
 
   $('recordingSelect').addEventListener('change',e=>loadRecording(e.target.value));
   $('trackSelect').addEventListener('change',render);
-  $('speedSelect').addEventListener('change',e=>{speed=Number(e.target.value);if(playing){animationStart=performance.now();replayStart=frameTime(frames[index]);}});
+  $('speedSelect').addEventListener('change',e=>{speed=Number(e.target.value);if(playing)resetPlaybackClock();});
   $('playButton').addEventListener('click',play); $('pauseButton').addEventListener('click',pause);
   $('timeline').addEventListener('input',e=>{pause();index=Number(e.target.value);render();});
   $('mode2d').addEventListener('click',()=>{mode='2d';$('mode2d').classList.add('active');$('mode3d').classList.remove('active');render();});
