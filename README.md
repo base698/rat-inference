@@ -242,8 +242,8 @@ uv run --extra jetson python rt_200.py \
   --use-csi \
   --disable-detection \
   --stereo \
-  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 51.1 \
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5 \
   --port /dev/ttyACM0
 ```
 
@@ -258,14 +258,14 @@ uv run --extra jetson python rt_200.py \
   --disable-servos \
   --no-connect \
   --stereo \
-  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 51.1
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5
 
 # Simple video-only CSI stream, no servos, no detection
 uv run python rt_200.py --video-only
 ```
 
-The measured physical distance between stereo lens centers is `57.5mm`. The current live depth scale uses an empirical effective baseline override of `51.1mm`, which matched a tape-measured `1.6m` target after the calibrated baseline overestimated distance.
+The measured physical distance between stereo lens centers is `52.5mm`. The current live depth scale uses that physical baseline override with the 960px stereo calibration.
 
 `config.yaml` contains two crosshair alignment systems:
 
@@ -580,8 +580,9 @@ rat-inference/
 │       ├── calibration/
 │       │   ├── capture_calibration.py # Capture mono/stereo checkerboard images
 │       │   ├── calibrate_camera.py    # Solve mono/stereo camera calibration
-│       │   ├── images_recal/          # Current tracked stereo calibration captures
-│       │   └── output_recal/          # Current tracked calibration .npz outputs
+│       │   ├── images_recal/          # Older tracked stereo calibration captures
+│       │   ├── output_recal/          # Older tracked calibration .npz outputs
+│       │   └── output_960/            # Current tracked 960px calibration .npz outputs
 │       ├── dataset/
 │       │   ├── dataset_cleaner.py     # Review/remove bad dataset images
 │       │   ├── generate-dataset.py    # Generate candidate training images
@@ -725,12 +726,12 @@ uv run python rt_200.py \
   --enable-camera \
   --use-csi \
   --stereo \
-  --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
-  --baseline-override 51.1 \
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5 \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.70 \
   --device 0 \
-  --imgsz 640 \
+  --imgsz 960 \
   --inference-fps 20
 
 # Access web interface at http://<jetson-ip>:8000

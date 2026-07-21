@@ -33,3 +33,5 @@ tools/vision/calibration/images_recal/
 # The selected .npz calibration files are intentionally tracked.
 tools/vision/calibration/output_recal/**/visualizations/
 tools/vision/calibration/output_recal/**/undistortion_comparison.jpg
+tools/vision/calibration/output_960/**/visualizations/
+tools/vision/calibration/output_960/**/undistortion_comparison.jpg
