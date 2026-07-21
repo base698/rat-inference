@@ -28,13 +28,15 @@ def target_class_matches(class_name: str, cls_id: int, target_class: Optional[st
 
     target = target_class.strip().lower()
     normalized_name = class_name.strip().lower()
-    class_aliases = {
-        str(cls_id),
-        f"class{cls_id}",
-        f"class_{cls_id}",
-    }
+    generated_class_aliases = {f"class{cls_id}", f"class_{cls_id}"}
 
-    return target in normalized_name or target in class_aliases
+    if target in normalized_name:
+        return True
+
+    if target == str(cls_id):
+        return True
+
+    return normalized_name in generated_class_aliases and target in generated_class_aliases
 
 
 def run_inference(
