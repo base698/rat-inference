@@ -16,6 +16,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+CSI_SENSOR_WIDTH = 1640
+CSI_SENSOR_HEIGHT = 1232
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -39,8 +42,25 @@ except ImportError:
     FASTAPI_AVAILABLE = False
     print("Warning: FastAPI not available. Web server mode disabled.")
 
+
+def gstreamer_pipeline(sensor_id, width, height, fps=30, flip_method=0):
+    """Build the Jetson CSI pipeline used by the calibration helper."""
+    return (
+        f"nvarguscamerasrc sensor-id={sensor_id} ! "
+        f"video/x-raw(memory:NVMM), width=(int){CSI_SENSOR_WIDTH}, "
+        f"height=(int){CSI_SENSOR_HEIGHT}, format=(string)NV12, "
+        f"framerate=(fraction){fps}/1 ! "
+        f"nvvidconv flip-method={flip_method} ! "
+        f"video/x-raw, width=(int){width}, height=(int){height}, "
+        "format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+    )
+
+
 def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
-                               num_images=30, use_csi=False, stereo_mode=False):
+                               num_images=30, use_csi=False, stereo_mode=False,
+                               width=640, height=480):
     """
     Capture calibration images with text feedback for headless operation
 
@@ -51,6 +71,8 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
         num_images: Target number of images to capture
         use_csi: Use CSI camera with GStreamer
         stereo_mode: Capture from two cameras for stereo calibration
+        width: Output frame width
+        height: Output frame height
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -61,24 +83,16 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
         if CSI_HELPER_AVAILABLE:
             cap = CSICameraCapture(
                 sensor_id=0,
-                width=640,
-                height=480,
+                width=width,
+                height=height,
                 fps=30,
                 flip_method=0
             )
             cap.start()
-            print("✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ 30 FPS)")
+            print(f"✓ CSI Camera initialized with subprocess+GStreamer ({width}x{height} @ 30 FPS)")
         else:
             # Fallback to cv2.VideoCapture with GStreamer
-            gst_pipeline = (
-                "nvarguscamerasrc sensor-id=0 ! "
-                "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
-                "format=(string)NV12, framerate=(fraction)30/1 ! "
-                "nvvidconv flip-method=0 ! "
-                "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
-                "videoconvert ! "
-                "video/x-raw, format=(string)BGR ! appsink"
-            )
+            gst_pipeline = gstreamer_pipeline(0, width, height)
             cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
             print("✓ CSI Camera initialized with cv2.VideoCapture+GStreamer")
 
@@ -88,8 +102,8 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
             if CSI_HELPER_AVAILABLE:
                 cap2 = CSICameraCapture(
                     sensor_id=1,
-                    width=640,
-                    height=480,
+                    width=width,
+                    height=height,
                     fps=30,
                     flip_method=0
                 )
@@ -104,8 +118,8 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
         cap = cv2.VideoCapture(camera_id)
         # Set format to MJPEG if available (better compatibility, prevents green image)
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         cap.set(cv2.CAP_PROP_FPS, 30)
         cap2 = None
         if stereo_mode:
@@ -113,8 +127,8 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
             cap2 = cv2.VideoCapture(camera_id + 1)
             # Set format to MJPEG if available (better compatibility, prevents green image)
             cap2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            cap2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap2.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             cap2.set(cv2.CAP_PROP_FPS, 30)
 
     if not cap.isOpened():
@@ -129,6 +143,7 @@ def capture_calibration_images(camera_id, output_dir, pattern_size=(9, 6),
     print("CALIBRATION IMAGE CAPTURE (Headless Mode)")
     print("="*60)
     print(f"Pattern size: {pattern_size[0]}x{pattern_size[1]} internal corners")
+    print(f"Frame size: {width}x{height}")
     print(f"Target images: {num_images}")
     print(f"Output directory: {output_dir}")
     print("\nInstructions:")
@@ -227,18 +242,23 @@ class WebCalibrationCapture:
     """Web-based calibration capture with browser interface"""
 
     def __init__(self, camera_id=0, output_dir='calibration_images', pattern_size=(9, 6),
-                 use_csi=False, stereo_mode=False):
+                 use_csi=False, stereo_mode=False, width=640, height=480):
         self.camera_id = camera_id
         self.output_dir = output_dir
         self.pattern_size = pattern_size
         self.use_csi = use_csi
         self.stereo_mode = stereo_mode
+        self.width = int(width)
+        self.height = int(height)
 
         # State
         self.captured_count = 0
         self.latest_frame = None
         self.latest_frame_left = None
         self.latest_frame_right = None
+        self.latest_clean_frame = None
+        self.latest_clean_frame_left = None
+        self.latest_clean_frame_right = None
         self.pattern_detected = False
         self.pattern_detected_left = False
         self.pattern_detected_right = False
@@ -271,13 +291,16 @@ class WebCalibrationCapture:
                 try:
                     self.cap = CSICameraCapture(
                         sensor_id=0,
-                        width=640,
-                        height=480,
+                        width=self.width,
+                        height=self.height,
                         fps=30,
                         flip_method=0
                     )
                     self.cap.start()
-                    print("✓ CSI Camera initialized with subprocess+GStreamer (640x480 @ 30 FPS)")
+                    print(
+                        "✓ CSI Camera initialized with subprocess+GStreamer "
+                        f"({self.width}x{self.height} @ 30 FPS)"
+                    )
                 except Exception as e:
                     print(f"✗ Failed to initialize CSICameraCapture: {e}")
                     print("Falling back to cv2.VideoCapture...")
@@ -286,15 +309,7 @@ class WebCalibrationCapture:
             if not use_csi_helper:
                 # Fallback to cv2.VideoCapture with GStreamer
                 print("Using cv2.VideoCapture with GStreamer pipeline...")
-                gst_pipeline = (
-                    "nvarguscamerasrc sensor-id=0 ! "
-                    "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
-                    "format=(string)NV12, framerate=(fraction)30/1 ! "
-                    "nvvidconv flip-method=0 ! "
-                    "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
-                    "videoconvert ! "
-                    "video/x-raw, format=(string)BGR ! appsink"
-                )
+                gst_pipeline = gstreamer_pipeline(0, self.width, self.height)
                 self.cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
                 if self.cap.isOpened():
                     print("✓ CSI Camera initialized with cv2.VideoCapture+GStreamer")
@@ -306,8 +321,8 @@ class WebCalibrationCapture:
                     try:
                         self.cap2 = CSICameraCapture(
                             sensor_id=1,
-                            width=640,
-                            height=480,
+                            width=self.width,
+                            height=self.height,
                             fps=30,
                             flip_method=0
                         )
@@ -316,15 +331,7 @@ class WebCalibrationCapture:
                     except Exception as e:
                         print(f"✗ Failed to initialize second CSICameraCapture: {e}")
                 else:
-                    gst_pipeline2 = (
-                        "nvarguscamerasrc sensor-id=1 ! "
-                        "video/x-raw(memory:NVMM), width=(int)1280, height=(int)720, "
-                        "format=(string)NV12, framerate=(fraction)30/1 ! "
-                        "nvvidconv flip-method=0 ! "
-                        "video/x-raw, width=(int)640, height=(int)480, format=(string)BGRx ! "
-                        "videoconvert ! "
-                        "video/x-raw, format=(string)BGR ! appsink"
-                    )
+                    gst_pipeline2 = gstreamer_pipeline(1, self.width, self.height)
                     self.cap2 = cv2.VideoCapture(gst_pipeline2, cv2.CAP_GSTREAMER)
                     if self.cap2.isOpened():
                         print("✓ Second CSI Camera initialized with cv2.VideoCapture+GStreamer")
@@ -334,16 +341,16 @@ class WebCalibrationCapture:
             self.cap = cv2.VideoCapture(self.camera_id)
             # Set format to MJPEG if available (better compatibility, prevents green image)
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
 
             if self.stereo_mode:
                 self.cap2 = cv2.VideoCapture(self.camera_id + 1)
                 # Set format to MJPEG if available (better compatibility, prevents green image)
                 self.cap2.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                self.cap2.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.cap2.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                self.cap2.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.cap2.set(cv2.CAP_PROP_FPS, 30)
 
     def _capture_loop(self):
@@ -358,6 +365,8 @@ class WebCalibrationCapture:
                 continue
 
             ret2, frame2 = (self.cap2.read() if self.stereo_mode else (None, None))
+            clean_frame = frame.copy()
+            clean_frame2 = frame2.copy() if ret2 else None
 
             # Convert to grayscale and find pattern
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -400,33 +409,32 @@ class WebCalibrationCapture:
                     if self.stereo_mode:
                         left_path = f"{self.output_dir}/left/img_{self.captured_count:03d}_{timestamp}.jpg"
                         right_path = f"{self.output_dir}/right/img_{self.captured_count:03d}_{timestamp}.jpg"
-                        # Save original frames without overlays
-                        ret_orig, frame_orig = self.cap.read()
-                        ret2_orig, frame2_orig = (self.cap2.read() if ret2 else (False, None))
-                        if ret_orig and ret2_orig:
-                            cv2.imwrite(left_path, frame_orig)
-                            cv2.imwrite(right_path, frame2_orig)
+                        if clean_frame2 is not None:
+                            cv2.imwrite(left_path, clean_frame)
+                            cv2.imwrite(right_path, clean_frame2)
                             print(f"[AUTO] Saved {self.captured_count}: {left_path} & {right_path}")
+                            self.captured_count += 1
                     else:
                         filename = f"{self.output_dir}/img_{self.captured_count:03d}_{timestamp}.jpg"
-                        # Save original frame without overlays
-                        ret_orig, frame_orig = self.cap.read()
-                        if ret_orig:
-                            cv2.imwrite(filename, frame_orig)
-                            print(f"[AUTO] Saved {self.captured_count}: {filename}")
+                        cv2.imwrite(filename, clean_frame)
+                        print(f"[AUTO] Saved {self.captured_count}: {filename}")
+                        self.captured_count += 1
 
-                    self.captured_count += 1
-                    last_capture_time = current_time
+                    if should_save:
+                        last_capture_time = current_time
 
             # Update state
             with self.lock:
                 if self.stereo_mode:
                     self.latest_frame_left = frame.copy()
                     self.latest_frame_right = frame2.copy() if ret2 else None
+                    self.latest_clean_frame_left = clean_frame.copy()
+                    self.latest_clean_frame_right = clean_frame2.copy() if clean_frame2 is not None else None
                     self.pattern_detected_left = found
                     self.pattern_detected_right = found2
                 else:
                     self.latest_frame = frame.copy()
+                    self.latest_clean_frame = clean_frame.copy()
                     self.pattern_detected = found
 
             # Limit to ~5 FPS
@@ -462,7 +470,7 @@ class WebCalibrationCapture:
                 if not self.pattern_detected_left or not self.pattern_detected_right:
                     return False, "Pattern not detected in both cameras"
 
-                if self.latest_frame_left is None or self.latest_frame_right is None:
+                if self.latest_clean_frame_left is None or self.latest_clean_frame_right is None:
                     return False, "Frames not available"
 
                 # Save both images
@@ -470,8 +478,8 @@ class WebCalibrationCapture:
                 left_path = f"{self.output_dir}/left/img_{self.captured_count:03d}_{timestamp}.jpg"
                 right_path = f"{self.output_dir}/right/img_{self.captured_count:03d}_{timestamp}.jpg"
 
-                cv2.imwrite(left_path, self.latest_frame_left)
-                cv2.imwrite(right_path, self.latest_frame_right)
+                cv2.imwrite(left_path, self.latest_clean_frame_left)
+                cv2.imwrite(right_path, self.latest_clean_frame_right)
 
                 self.captured_count += 1
                 return True, f"Saved {Path(left_path).name} and {Path(right_path).name}"
@@ -480,13 +488,13 @@ class WebCalibrationCapture:
                 if not self.pattern_detected:
                     return False, "Pattern not detected"
 
-                if self.latest_frame is None:
+                if self.latest_clean_frame is None:
                     return False, "Frame not available"
 
                 # Save image
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 filename = f"{self.output_dir}/img_{self.captured_count:03d}_{timestamp}.jpg"
-                cv2.imwrite(filename, self.latest_frame)
+                cv2.imwrite(filename, self.latest_clean_frame)
 
                 self.captured_count += 1
                 return True, f"Saved {Path(filename).name}"
@@ -510,8 +518,8 @@ class WebCalibrationCapture:
 
         if frame is None:
             # Return blank frame
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(frame, "No frame", (200, 240),
+            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            cv2.putText(frame, "No frame", (self.width // 3, self.height // 2),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
         ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -527,7 +535,8 @@ class WebCalibrationCapture:
 
 
 def start_web_server(camera_id=0, output_dir='calibration_images', pattern_size=(9, 6),
-                     use_csi=False, stereo_mode=False, port=8000):
+                     use_csi=False, stereo_mode=False, port=8000,
+                     width=640, height=480):
     """Start web server for calibration capture"""
 
     if not FASTAPI_AVAILABLE:
@@ -538,23 +547,23 @@ def start_web_server(camera_id=0, output_dir='calibration_images', pattern_size=
 
     # Initialize capture system
     capture_system = WebCalibrationCapture(camera_id, output_dir, pattern_size,
-                                           use_csi, stereo_mode)
+                                           use_csi, stereo_mode, width, height)
 
     @app.get("/", response_class=HTMLResponse)
     async def root():
         """Serve main page"""
         stereo_html = ""
         if stereo_mode:
-            stereo_html = """
+            stereo_html = f"""
             <h2>Stereo Cameras</h2>
             <div style="display: flex; gap: 20px;">
                 <div>
                     <h3>Left Camera</h3>
-                    <img src="/stream/left" width="640" height="480" style="border: 2px solid #333;">
+                    <img src="/stream/left" width="{width}" height="{height}" style="border: 2px solid #333; max-width: 48vw; height: auto;">
                 </div>
                 <div>
                     <h3>Right Camera</h3>
-                    <img src="/stream/right" width="640" height="480" style="border: 2px solid #333;">
+                    <img src="/stream/right" width="{width}" height="{height}" style="border: 2px solid #333; max-width: 48vw; height: auto;">
                 </div>
             </div>
             <h3>Combined View</h3>
@@ -591,6 +600,7 @@ def start_web_server(camera_id=0, output_dir='calibration_images', pattern_size=
         <body>
             <h1>📷 Camera Calibration Capture</h1>
             <p>Pattern: {pattern_size[0]}x{pattern_size[1]} internal corners</p>
+            <p>Frame: {width}x{height}</p>
             <p>Output: {output_dir}/</p>
 
             <div id="status" class="info">Status: Ready - Position checkerboard and click Capture</div>
@@ -601,8 +611,8 @@ def start_web_server(camera_id=0, output_dir='calibration_images', pattern_size=
             {stereo_html}
 
             <h2>Camera Feed</h2>
-            <img src="/stream" width="{'1280' if stereo_mode else '640'}" height="480"
-                 style="border: 2px solid #333;">
+            <img src="/stream" width="{width * 2 if stereo_mode else width}" height="{height}"
+                 style="border: 2px solid #333; max-width: 100%; height: auto;">
 
             <h2>Instructions</h2>
             <ul>
@@ -719,6 +729,7 @@ Examples:
   # Web server mode (recommended - view in browser)
   python tools/vision/calibration/capture_calibration.py --web --camera 0 --output calib_images
   python tools/vision/calibration/capture_calibration.py --web --use-csi --stereo --output calib_stereo
+  python tools/vision/calibration/capture_calibration.py --web --use-csi --stereo --width 960 --height 720 --output calib_stereo_960
 
   # Headless text mode
   python tools/vision/calibration/capture_calibration.py --camera 0 --output calib_images
@@ -744,6 +755,10 @@ Examples:
                        help='Start web server (view in browser)')
     parser.add_argument('--port', type=int, default=8000,
                        help='Web server port (default: 8000)')
+    parser.add_argument('--width', type=int, default=640,
+                       help='Captured frame width in pixels (default: 640)')
+    parser.add_argument('--height', type=int, default=480,
+                       help='Captured frame height in pixels (default: 480)')
 
     args = parser.parse_args()
 
@@ -766,7 +781,9 @@ Examples:
             pattern_size=pattern_size,
             use_csi=use_csi,
             stereo_mode=args.stereo,
-            port=args.port
+            port=args.port,
+            width=args.width,
+            height=args.height
         )
     else:
         # Headless text mode
@@ -776,7 +793,9 @@ Examples:
             pattern_size=pattern_size,
             num_images=args.count,
             use_csi=use_csi,
-            stereo_mode=args.stereo
+            stereo_mode=args.stereo,
+            width=args.width,
+            height=args.height
         )
 
 if __name__ == "__main__":

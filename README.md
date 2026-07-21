@@ -308,7 +308,9 @@ uv run --extra jetson python tools/vision/calibration/capture_calibration.py \
   --use-csi \
   --stereo \
   --pattern 6x4 \
-  --output tools/vision/calibration/images_recal \
+  --width 960 \
+  --height 720 \
+  --output tools/vision/calibration/images_960 \
   --port 8010
 ```
 
@@ -317,11 +319,11 @@ Open `http://<jetson-ip>:8010`, capture 40-60 good stereo pairs, then calibrate.
 ```bash
 uv run --extra jetson python tools/vision/calibration/calibrate_camera.py \
   --stereo \
-  --left "tools/vision/calibration/images_recal/left/*.jpg" \
-  --right "tools/vision/calibration/images_recal/right/*.jpg" \
+  --left "tools/vision/calibration/images_960/left/*.jpg" \
+  --right "tools/vision/calibration/images_960/right/*.jpg" \
   --pattern 6x4 \
   --square-size 21 \
-  --output tools/vision/calibration/output_recal
+  --output tools/vision/calibration/output_960
 ```
 
 The current recalibration produced:
