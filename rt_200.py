@@ -500,6 +500,7 @@ class CameraTracker:
             min_texture_std=tracking_config.get('depth_min_texture_std', 4.0),
             min_valid_mm=tracking_config.get('depth_min_valid_mm', 0.0),
             max_valid_mm=tracking_config.get('depth_max_valid_mm', 6000.0),
+            image_size=(self.camera_width, self.camera_height),
         )
         self.overlay_renderer = OverlayRenderer(
             stereo_depth=self.stereo_depth,

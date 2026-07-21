@@ -45,6 +45,38 @@ class StereoDepthServiceTests(unittest.TestCase):
         np.testing.assert_array_equal(service.camera_matrix, matrix)
         np.testing.assert_array_equal(service.dist_coeffs, distortion)
 
+    def test_stereo_rectification_uses_configured_image_size(self):
+        service = StereoDepthService(image_size=(960, 720))
+        service.K1 = np.eye(3)
+        service.K2 = np.eye(3)
+        service.D1 = np.zeros(5)
+        service.D2 = np.zeros(5)
+        service.R = np.eye(3)
+        service.T = np.array([[10.0], [0.0], [0.0]])
+        rectified_sizes = []
+        map_sizes = []
+
+        def fake_stereo_rectify(*args, **kwargs):
+            rectified_sizes.append(args[4])
+            p1 = np.array([[100.0, 0.0, 480.0, 0.0],
+                           [0.0, 100.0, 360.0, 0.0],
+                           [0.0, 0.0, 1.0, 0.0]])
+            p2 = p1.copy()
+            p2[0, 3] = -1000.0
+            return np.eye(3), np.eye(3), p1, p2, np.eye(4), None, None
+
+        def fake_init_map(_k, _d, _r, _p, size, _type):
+            map_sizes.append(size)
+            return object(), object()
+
+        with patch("cv2.stereoRectify", side_effect=fake_stereo_rectify), \
+             patch("cv2.undistortPoints", return_value=np.array([[[480.0, 360.0]]], dtype=np.float32)), \
+             patch("cv2.initUndistortRectifyMap", side_effect=fake_init_map):
+            service.init_stereo_rectification()
+
+        self.assertEqual(rectified_sizes, [(960, 720)])
+        self.assertEqual(map_sizes, [(960, 720), (960, 720)])
+
     def test_depth_is_unavailable_when_stereo_is_disabled(self):
         service = StereoDepthService()
         frame = np.zeros((64, 64, 3), dtype=np.uint8)

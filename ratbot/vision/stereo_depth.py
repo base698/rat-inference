@@ -34,6 +34,7 @@ class StereoDepthService:
         min_texture_std=4.0,
         min_valid_mm=0.0,
         max_valid_mm=6000.0,
+        image_size=(640, 480),
     ):
         self.calibration_file = calibration_file
         self.camera_matrix = None
@@ -63,6 +64,7 @@ class StereoDepthService:
         self.depth_min_texture_std = float(min_texture_std)
         self.depth_min_valid_mm = float(min_valid_mm)
         self.depth_max_valid_mm = float(max_valid_mm)
+        self.image_size = (int(image_size[0]), int(image_size[1]))
         self.last_depth_debug = "not computed"
 
         if self.calibration_file:
@@ -147,9 +149,10 @@ class StereoDepthService:
             self.calibration_enabled = False
             self.stereo_calibration_enabled = False
 
-    def init_stereo_rectification(self, image_size=(640, 480)):
+    def init_stereo_rectification(self, image_size=None):
         """Build rectification maps so stereo disparity is computed on aligned frames."""
         try:
+            image_size = self.image_size if image_size is None else image_size
             self.R1, self.R2, self.P1, self.P2, self.Q, _, _ = cv2.stereoRectify(
                 self.K1, self.D1,
                 self.K2, self.D2,

@@ -314,7 +314,7 @@ uv run --extra jetson python tools/vision/calibration/capture_calibration.py \
   --port 8010
 ```
 
-Open `http://<jetson-ip>:8010`, capture 40-60 good stereo pairs, then calibrate. Use the measured square size for `--square-size`; the last screen-based calibration used `21mm`.
+Open `http://<jetson-ip>:8010`, capture 40-60 good stereo pairs, then calibrate. Use the displayed square size measured with calipers for `--square-size`; the 960x720 screen-based calibration used `37mm`.
 
 ```bash
 uv run --extra jetson python tools/vision/calibration/calibrate_camera.py \
@@ -322,7 +322,7 @@ uv run --extra jetson python tools/vision/calibration/calibrate_camera.py \
   --left "tools/vision/calibration/images_960/left/*.jpg" \
   --right "tools/vision/calibration/images_960/right/*.jpg" \
   --pattern 6x4 \
-  --square-size 21 \
+  --square-size 37 \
   --output tools/vision/calibration/output_960
 ```
 
