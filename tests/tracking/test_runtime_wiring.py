@@ -171,6 +171,78 @@ class CameraTrackerWorldWiringTests(unittest.TestCase):
         self.assertIsNotNone(record["predicted_aim"])
         self.assertEqual(record["tracks"][0]["id"], 1)
 
+    def test_ui_recording_captures_world_updates_into_session_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracker = CameraTracker(
+                enable_servos=False,
+                no_connect=True,
+                enable_camera=False,
+                world_tracking=True,
+                world_confirm_hits=1,
+                world_recordings_dir=temp_dir,
+            )
+            started = tracker.start_track_recording()
+            stereo = StereoPointMeasurement(
+                depth_mm=1000.0,
+                disparity_px=20.0,
+                valid_ratio=1.0,
+                disparity_iqr_px=0.0,
+                texture_std=10.0,
+                confidence=1.0,
+                point_camera_mm=np.array([0.0, 0.0, 1000.0]),
+                covariance_camera=np.eye(3) * 25.0,
+            )
+            tracker.update_world_tracks(
+                [{"confidence": 0.9, "class_name": "rat", "bbox": (1, 2, 3, 4), "center": (2, 3)}],
+                [stereo],
+                timestamp=10.0,
+                yaw_raw=tracker.current_yaw,
+                pitch_raw=tracker.current_pitch,
+            )
+            stopped = tracker.stop_track_recording()
+            replay = tracker.load_track_recording(started["id"])
+
+        self.assertEqual(stopped["frame_count"], 1)
+        self.assertEqual(replay["frames"][0]["measurements"][0]["bbox"], [1, 2, 3, 4])
+        self.assertEqual(replay["metadata"]["parameters"]["confirm_hits"], 1)
+
+    def test_recording_disk_failure_stops_session_without_aborting_world_update(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tracker = CameraTracker(
+                enable_servos=False,
+                no_connect=True,
+                enable_camera=False,
+                world_tracking=True,
+                world_confirm_hits=1,
+                world_recordings_dir=temp_dir,
+            )
+            tracker.start_track_recording()
+            tracker.track_recordings.append = MagicMock(side_effect=OSError("disk full"))
+            stereo = StereoPointMeasurement(
+                depth_mm=1000.0,
+                disparity_px=20.0,
+                valid_ratio=1.0,
+                disparity_iqr_px=0.0,
+                texture_std=10.0,
+                confidence=1.0,
+                point_camera_mm=np.array([0.0, 0.0, 1000.0]),
+                covariance_camera=np.eye(3) * 25.0,
+            )
+
+            tracks = tracker.update_world_tracks(
+                [{"confidence": 0.9, "class_name": "rat", "bbox": (1, 2, 3, 4), "center": (2, 3)}],
+                [stereo],
+                timestamp=10.0,
+                yaw_raw=tracker.current_yaw,
+                pitch_raw=tracker.current_pitch,
+            )
+
+            self.assertEqual(len(tracks), 1)
+            self.assertFalse(tracker.get_track_recording_status()["recording"])
+            metadata = tracker.list_track_recordings()[0]
+            self.assertEqual(metadata["status"], "failed")
+            self.assertEqual(metadata["stop_reason"], "storage_error")
+
     def test_world_mode_without_depth_does_not_create_or_move_track(self):
         tracker = CameraTracker(
             enable_servos=False,

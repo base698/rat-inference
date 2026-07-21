@@ -17,6 +17,7 @@ yolo*.pt
 
 # Runtime captures and generated local artifacts
 detections/
+run_logs/
 /calibration_images/
 tools/vision/calibration/images_recal/
 *.log

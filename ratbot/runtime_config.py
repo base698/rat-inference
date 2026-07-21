@@ -74,6 +74,8 @@ class TrackerRuntimeConfig:
     world_camera_translation_mm: tuple[float, float, float]
     world_camera_mount_rpy_degrees: tuple[float, float, float]
     world_log_path: str | None
+    world_recordings_dir: str
+    world_api_recording_enabled: bool
     world_api_selection_enabled: bool
     world_actuation_enabled: bool
     world_calibration_validated: bool
@@ -463,6 +465,10 @@ def parse_runtime_config(
             world.get("camera_mount_rpy_degrees")
         ),
         world_log_path=world.get("log_path"),
+        world_recordings_dir=str(world.get("recordings_dir", "run_logs/tracks")),
+        world_api_recording_enabled=_strict_bool(
+            world, "allow_remote_recording"
+        ),
         world_api_selection_enabled=_strict_bool(
             world, "allow_remote_selection"
         ),

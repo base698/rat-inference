@@ -28,6 +28,7 @@ from ratbot.tracking import (
     TurretFrameTransformer,
     WorldTrackBeliefAdapter,
 )
+from ratbot.tracking.recording import TrackRecordingStore
 from ratbot.robot import (
     AngularBeliefController,
     AngularTargetBelief,
@@ -329,7 +330,8 @@ class CameraTracker:
                  world_yaw_sign=1.0, world_pitch_sign=-1.0,
                  world_camera_translation_mm=(0.0, 0.0, 0.0),
                  world_camera_mount_rpy_degrees=(0.0, 0.0, 0.0),
-                 world_log_path=None,
+                 world_log_path=None, world_recordings_dir="run_logs/tracks",
+                 world_api_recording_enabled=False,
                  world_api_selection_enabled=False,
                  world_actuation_enabled=False,
                  world_calibration_validated=False):
@@ -457,6 +459,8 @@ class CameraTracker:
         )
         self.world_aim_latency_seconds = max(0.0, float(world_aim_latency_seconds))
         self.world_log_path = str(world_log_path) if world_log_path else None
+        self.track_recordings = TrackRecordingStore(world_recordings_dir)
+        self.world_api_recording_enabled = bool(world_api_recording_enabled)
         self.world_api_selection_enabled = bool(world_api_selection_enabled)
         self.latest_tracks = []
         self.latest_track_assignments = []
@@ -902,7 +906,7 @@ class CameraTracker:
             if selected is not None and selected.misses == 0:
                 self.latest_bbox = selected.bbox
                 self.latest_center_point = selected.center
-        if self.world_log_path:
+        if self.world_log_path or self.track_recordings.status()["recording"]:
             self._log_world_update(
                 timestamp=float(timestamp),
                 measurement_count=len(measurements_3d),
@@ -958,6 +962,11 @@ class CameraTracker:
             "assignments": list(self.world_tracker.last_assignments),
             "tracks": [track.to_dict() for track in tracks],
         }
+        try:
+            self.track_recordings.append(record)
+        except (OSError, TypeError, ValueError) as exc:
+            self.track_recordings.fail(str(exc))
+            print(f"Track-recording error; recording stopped: {exc}")
         log_path = self.world_log_path
         if not log_path:
             return
@@ -1001,6 +1010,41 @@ class CameraTracker:
 
     def get_world_tracks(self):
         return [track.to_dict() for track in self.world_tracker.get_tracks()]
+
+    def _world_tracking_parameters(self):
+        config = self.world_tracker.config
+        return {
+            "gate_distance_mm": config.gate_distance_mm,
+            "confirm_hits": config.confirm_hits,
+            "max_misses": config.max_misses,
+            "delete_after_seconds": config.delete_after_seconds,
+            "process_acceleration_std_mm_s2": config.process_acceleration_std_mm_s2,
+            "confidence_decay": config.confidence_decay,
+            "min_depth_confidence": self.world_min_depth_confidence,
+        }
+
+    def get_track_recording_status(self):
+        return self.track_recordings.status()
+
+    def start_track_recording(self):
+        if not self.world_tracking:
+            raise RuntimeError("world tracking must be enabled before recording")
+        return self.track_recordings.start(self._world_tracking_parameters())
+
+    def stop_track_recording(self):
+        return self.track_recordings.stop()
+
+    def list_track_recordings(self):
+        return self.track_recordings.list_recordings()
+
+    def load_track_recording(self, recording_id):
+        return self.track_recordings.load(recording_id)
+
+    def delete_track_recording(self, recording_id):
+        return self.track_recordings.delete(recording_id)
+
+    def reprocess_track_recording(self, recording_id, parameters):
+        return self.track_recordings.reprocess(recording_id, parameters)
 
     def select_world_target(self, target_id):
         return self.world_tracker.select_target(int(target_id))

@@ -46,6 +46,7 @@ build() {
 run_rt200() {
     echo "Starting rt_200.py server..."
     echo "Web interface will be available at http://localhost:8000"
+    mkdir -p detections runs run_logs
     docker run -d --rm \
         --name rat-inference \
         --privileged \
@@ -58,6 +59,7 @@ run_rt200() {
         -v /var/run:/var/run \
         -v $(pwd)/detections:/app/detections \
         -v $(pwd)/runs:/app/runs \
+        -v $(pwd)/run_logs:/app/run_logs \
         --device=/dev/ttyACM0:/dev/ttyACM0 \
         --group-add video \
         $IMAGE_NAME \

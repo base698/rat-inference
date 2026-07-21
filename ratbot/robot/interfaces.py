@@ -47,5 +47,35 @@ class TrackerRobot(Protocol):
     def clear_world_selection(self) -> bool:
         """Clear fixed-frame target selection without deleting tracks."""
 
+    def get_track_recording_status(self) -> dict[str, object]:
+        """Return active recording state."""
+        ...
+
+    def start_track_recording(self) -> dict[str, object]:
+        """Start a durable world-observation recording."""
+        ...
+
+    def stop_track_recording(self) -> dict[str, object]:
+        """Stop and finalize the active recording."""
+        ...
+
+    def list_track_recordings(self) -> list[dict[str, object]]:
+        """List available replay sessions."""
+        ...
+
+    def load_track_recording(self, recording_id: str) -> dict[str, object]:
+        """Load one replay session."""
+        ...
+
+    def delete_track_recording(self, recording_id: str) -> dict[str, object]:
+        """Delete one saved replay session."""
+        ...
+
+    def reprocess_track_recording(
+        self, recording_id: str, parameters: Mapping[str, object]
+    ) -> dict[str, object]:
+        """Re-run association/filtering from saved 3D observations."""
+        ...
+
     def move_to_pixel(self, x: NumericPosition, y: NumericPosition) -> Tuple[int, int]:
         """Convert an image-space target into desired yaw and pitch positions."""

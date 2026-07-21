@@ -186,6 +186,12 @@ Jetson: CSI stereo camera input, TensorRT model inference, Feetech servos, and
 angular-belief tracking. Keep world tracking opt-in until its target identity and
 reacquisition behavior are reliable enough for normal use.
 
+The current CSI helper captures the IMX219 cameras at `1640x1232` and scales to
+the app's `640x480` frame. That gives a wider 4:3 field of view than the old
+`1280x720` input mode while keeping the web/video and inference frame size
+unchanged. Stereo calibration should be recaptured in this mode before trusting
+depth/world measurements.
+
 #### Stereo Depth + Laser Tracking
 
 Current working command for CSI stereo cameras, Feetech tracking servos, stereo depth, and laser/camera vertical compensation without detection:
@@ -343,7 +349,9 @@ IDs through short occlusions when the depth and association data are good.
 Current hardware testing shows target IDs can still churn or get lost, so this
 mode should be treated as visualization/research work rather than production
 tracking. Shadow mode computes, overlays, exposes, and logs tracks but does not
-connect them to servo actuation.
+connect them to servo actuation. The main-page World View uses the vendored
+`/static/vendor/three.module.js` renderer so robot testing does not depend on a
+browser CDN request.
 
 ```bash
 python3 rt_200.py --enable-camera --stereo --world-tracking
@@ -401,16 +409,64 @@ baseline. Do not copy a baseline from notes: project records have referenced
 both 51.1 mm and 57.5 mm rigs. Use `--baseline-override` only after measuring the
 physical camera pair used in that run.
 
-### Track API
+### Track Recording, Replay, and API
 
-- `GET /tracks` — list track ID, position, velocity, covariance, lifecycle,
-  confidence, selection, and last bounding box.
+The main control page has **Start recording** and **Stop & save** controls when
+world tracking and `tracking.world_frame.allow_remote_recording` are enabled.
+Enable that mutation gate only on a trusted LAN. Each session is stored under
+`tracking.world_frame.recordings_dir` (default `run_logs/tracks`) as:
+
+```text
+run_logs/tracks/<recording-id>/
+  metadata.json
+  observations.jsonl
+```
+
+`./run.sh rt200` mounts `run_logs/` into Docker, so recordings survive container
+restarts and can be cleaned up from the host or the replay UI.
+
+Open `/tracks` for the replay workbench. It provides:
+
+- recording and stable-track dropdowns;
+- pause/play plus `0.1×`, `0.25×`, `0.5×`, `0.75×`, `1×`, `1.5×`, and `2×` speeds;
+- a delete control for saved recording sessions;
+- an image-space 2D heatmap that accumulates bounding-box footprints, with
+  current bounding boxes and associated track IDs;
+- a fixed turret-base 3D view with tracks, trails, measurements, velocity vectors,
+  and `x forward / y left / z up` axes;
+- parameterized reprocessing using saved raw 3D observations. Confirmation hits,
+  association gate, miss/delete limits, process noise, and confidence decay can be
+  changed without commanding the robot.
+
+Routes:
+
+- `GET /tracks` — replay UI for browser requests (`Accept: text/html`), while
+  preserving the legacy live JSON response for API clients.
+- `GET /api/tracks/live` — live track ID, position, velocity, covariance,
+  lifecycle, confidence, selection, and last bounding box.
+- `GET /api/track-recordings` and `GET /api/track-recordings/{id}` — catalog and replay data.
+- `POST /api/track-recordings/start` / `stop` — recording lifecycle.
+- `DELETE /api/track-recordings/{id}` — remove one saved recording session.
+- `POST /api/track-recordings/{id}/reprocess` — rerun tracker parameters from observations.
 - `POST /tracks/select` with `{"track_id": 3}` — explicitly select an ID.
 - `POST /tracks/clear-selection` — stop autonomous aiming without deleting
   current tracks.
 - `POST /clear-belief` — clear both legacy angular belief and all world tracks.
 
-The two track-selection mutation routes are denied with `403` unless
+Recording is capped at 18,000 frames or 64 MiB per session, whichever comes
+first. The store also refuses new sessions after 100 saved sessions, after 1 GiB
+of aggregate recording data, or when it cannot reserve 512 MiB of free disk
+space. Replay parsing uses the same input limits, allows at most 8 measurements
+per frame and 32 concurrent tracks in a reprocessed result, applies bounded
+association-work and 30-second runtime budgets, and caps replay output at 64 MiB.
+CPU-heavy tracking and JSON serialization run outside the API event loop, and
+only one load/reprocessing job can run at a time. Sessions left open by
+a process crash are recovered as `interrupted` on restart.
+
+The recording mutation, catalog, load, and reprocessing routes are denied with
+`403` unless `tracking.world_frame.allow_remote_recording: true`. Recording status
+remains readable so the main UI can explain why controls are disabled. The two
+track-selection mutation routes are denied with `403` unless
 `tracking.world_frame.allow_remote_selection: true`. They are unauthenticated,
 so enable that option only when the API is bound to or firewalled within a trusted
 interface/network. Track IDs must be JSON integers; booleans, strings, and

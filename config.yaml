@@ -133,7 +133,10 @@ tracking:
     pitch_sign: -1.0    # Current rig: raw increase points downward
     camera_translation_mm: [0.0, 0.0, 0.0]  # MEASURE pivot -> camera optical center
     camera_mount_rpy_degrees: [0.0, 0.0, 0.0]
-    log_path: null       # Optional replayable JSONL, e.g. detections/world_tracks.jsonl
+    log_path: null       # Legacy always-on replay JSONL path (optional)
+    recordings_dir: run_logs/tracks  # Start/stop UI recordings, one directory per session
+    # Recording mutates state and writes disk. Enable only on a trusted LAN.
+    allow_remote_recording: false
     # Mutating track-selection routes are unauthenticated; keep disabled unless
     # the API is isolated to a trusted interface/network.
     allow_remote_selection: false
