@@ -73,8 +73,7 @@ class CameraTrackerWorldWiringTests(unittest.TestCase):
             yaw_raw=tracker.current_yaw,
             pitch_raw=tracker.current_pitch,
         )
-        self.assertIsNone(tracker.world_tracker.selected_track_id)
-        self.assertTrue(tracker.select_world_target(tracks[0].id))
+        self.assertEqual(tracker.world_tracker.selected_track_id, tracks[0].id)
         tracks = tracker.world_tracker.get_tracks()
         initial_yaw = tracker.current_yaw
         tracker.world_belief.clock = lambda: 10.0

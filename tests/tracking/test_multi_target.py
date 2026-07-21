@@ -64,6 +64,28 @@ class MultiTargetTrackerTests(unittest.TestCase):
         self.assertEqual(second[0].status, "confirmed")
         self.assertEqual(tracker.selected_track_id, second[0].id)
 
+    def test_single_only_auto_select_waits_for_one_confirmed_track(self):
+        tracker = self.make_tracker(
+            confirm_hits=1,
+            auto_select=True,
+            auto_select_single_only=True,
+        )
+
+        tracker.update(
+            [
+                detection(100, confidence=0.9),
+                detection(2000, confidence=0.8),
+            ],
+            timestamp=1.0,
+        )
+
+        self.assertIsNone(tracker.selected_track_id)
+
+        tracks = tracker.update([detection(100, confidence=0.9)], timestamp=2.0)
+
+        self.assertEqual(len(tracks), 2)
+        self.assertEqual(tracker.selected_track_id, tracks[0].id)
+
     def test_assignments_are_one_to_one_and_new_detection_creates_new_track(self):
         tracker = self.make_tracker(confirm_hits=1, auto_select=False)
         original = tracker.update([detection(0), detection(2000)], timestamp=1.0)

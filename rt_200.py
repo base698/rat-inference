@@ -649,9 +649,11 @@ class CameraTracker:
                 process_acceleration_std_mm_s2=float(
                     world_process_acceleration_std_mm_s2
                 ),
-                # Shadow mode may auto-select for observability. Physical actuation
-                # always starts unselected and requires an explicit target choice.
-                auto_select=not self.world_actuation_enabled,
+                # With physical actuation, auto-select only the lone confirmed
+                # visible track. Multi-target scenes still require explicit UI
+                # selection so the robot does not redirect to another object.
+                auto_select=True,
+                auto_select_single_only=self.world_actuation_enabled,
             )
         )
         self.world_belief = WorldTrackBeliefAdapter(

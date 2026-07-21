@@ -180,6 +180,8 @@ detection:
   target_classes:
     - item
     - class0
+    - bottle
+    - cup
 
 # Notes:
 # - pitch_compensation adjusts the target crosshair Y position based on current pitch

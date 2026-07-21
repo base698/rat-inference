@@ -23,6 +23,7 @@ class TrackManagerConfig:
     reidentify_after_seconds: float = 8.0
     process_acceleration_std_mm_s2: float = 300.0
     auto_select: bool = True
+    auto_select_single_only: bool = False
     confidence_decay: float = 0.85
 
     def __post_init__(self):
@@ -419,6 +420,8 @@ class MultiTargetTracker:
                     track for track in self._tracks.values()
                     if track.status == "confirmed" and track.misses == 0
                 ]
+                if self.config.auto_select_single_only and len(confirmed) != 1:
+                    confirmed = []
                 if confirmed:
                     self.selected_track_id = max(
                         confirmed,

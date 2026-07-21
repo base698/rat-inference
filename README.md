@@ -152,7 +152,7 @@ uv run --extra jetson python rt_200.py \
 uv run python rt_200.py --no-connect --enable-camera --use-csi --disable-world-tracking
 ```
 
-The custom rat models currently expose a single YOLO class named `item`, not `rat`. The TensorRT engine may report that same single class as `class0` if metadata is missing. By default, `config.yaml` sets `target_classes: [item, class0]`; omit `--target-class` to use the configured target, or pass `--target-class all` to accept every class from the loaded model.
+The custom rat models currently expose a single YOLO class named `item`, not `rat`. The TensorRT engine may report that same single class as `class0` if metadata is missing. By default, `config.yaml` sets `target_classes: [item, class0, bottle, cup]` so the same config can also test raw COCO cup/bottle tracking; omit `--target-class` to use the configured target, or pass `--target-class all` to accept every class from the loaded model.
 
 Current rat model command:
 
