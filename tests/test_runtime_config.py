@@ -173,6 +173,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(enabled.world_camera_translation_mm, (0.0, 0.0, 0.0))
         self.assertEqual(enabled.world_camera_mount_rpy_degrees, (0.0, 0.0, 0.0))
         self.assertEqual(enabled.world_pitch_sign, -1.0)
+        self.assertFalse(enabled.world_api_recording_enabled)
         self.assertFalse(enabled.world_api_selection_enabled)
         self.assertFalse(enabled.world_actuation_enabled)
         self.assertFalse(enabled.world_calibration_validated)
@@ -182,6 +183,7 @@ class RuntimeConfigTests(unittest.TestCase):
             "enabled",
             "actuation_enabled",
             "calibration_validated",
+            "allow_remote_recording",
             "allow_remote_selection",
         ):
             for invalid in ("false", "no", "0", 0, None, []):

@@ -1,0 +1,33 @@
+"""Static contract checks for the track replay and recording controls."""
+
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class TrackReplayUiContractTests(unittest.TestCase):
+    def test_replay_ui_exposes_required_modes_speeds_filters_and_tuning(self):
+        html = (ROOT / "static" / "tracks.html").read_text(encoding="utf-8")
+
+        for speed in ("0.1", "0.25", "0.5", "0.75", "1", "1.5", "2"):
+            self.assertIn(f'value="{speed}"', html)
+        for control_id in (
+            "recordingSelect", "trackSelect", "pauseButton", "mode2d", "mode3d",
+            "confirmHits", "gateDistance", "maxMisses", "deleteAfter",
+            "processNoise", "confidenceDecay", "reprocessButton",
+        ):
+            self.assertIn(f'id="{control_id}"', html)
+
+    def test_main_ui_exposes_start_stop_and_replay_link(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="startRecordingButton"', html)
+        self.assertIn('id="stopRecordingButton"', html)
+        self.assertIn('href="/tracks"', html)
+        self.assertIn("/api/track-recordings/${action}", html)
+
+
+if __name__ == "__main__":
+    unittest.main()

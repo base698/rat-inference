@@ -1,14 +1,86 @@
 """FastAPI controller for a camera/servo tracker."""
 
+import asyncio
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ratbot.robot import TrackerRobot
+
+_MAX_REPLAY_RESPONSE_BYTES = 64 * 1024 * 1024
+_MAX_REQUEST_BODY_BYTES = 64 * 1024
+
+
+class RequestBodyLimitMiddleware:
+    """Buffer at most 64 KiB, rejecting oversized bodies before FastAPI parses."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int = _MAX_REQUEST_BODY_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        raw_length = headers.get(b"content-length")
+        if raw_length is not None:
+            try:
+                content_length = int(raw_length)
+                if content_length < 0 or content_length > self.max_bytes:
+                    await self._reject(scope, receive, send)
+                    return
+            except ValueError:
+                await self._reject(scope, receive, send)
+                return
+
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] != "http.request":
+                continue
+            body.extend(message.get("body", b""))
+            if len(body) > self.max_bytes:
+                await self._reject(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        delivered = False
+
+        async def buffered_receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return await receive()
+
+        await self.app(scope, buffered_receive, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
+        response = JSONResponse(
+            {"success": False, "message": "Request body too large"},
+            status_code=413,
+        )
+        await response(scope, receive, send)
+
+
+def _call_and_serialize_json(callback, *args) -> bytes:
+    """Run replay work and JSON encoding in the worker thread, with a hard cap."""
+    payload = json.dumps(callback(*args), separators=(",", ":")).encode("utf-8")
+    if len(payload) > _MAX_REPLAY_RESPONSE_BYTES:
+        raise ValueError("replay response exceeds output-size limit")
+    return payload
 
 
 @dataclass(frozen=True)
@@ -39,6 +111,7 @@ class TrackerControlApi:
         self._get_target_crosshair_y = get_target_crosshair_y
         self._tracker: Optional[TrackerRobot] = None
         self.app = FastAPI()
+        self.app.add_middleware(RequestBodyLimitMiddleware)
 
         Path(self.config.static_dir).mkdir(exist_ok=True)
         self.app.mount(
@@ -57,6 +130,7 @@ class TrackerControlApi:
 
     def _register_routes(self) -> None:
         app = self.app
+        replay_lock = asyncio.Lock()
 
         @app.get("/")
         async def root():
@@ -87,6 +161,9 @@ class TrackerControlApi:
                 "initial_pitch": initial_pitch,
                 "enable_trigger": tracker.trigger_servo_enabled if tracker else False,
                 "world_tracking": bool(getattr(tracker, "world_tracking", False)) if tracker else False,
+                "track_recording_enabled": bool(
+                    getattr(tracker, "world_api_recording_enabled", False)
+                ) if tracker else False,
             })
 
         @app.get("/status")
@@ -230,9 +307,7 @@ class TrackerControlApi:
                     status_code=500,
                 )
 
-        @app.get("/tracks")
-        async def get_tracks():
-            """Return all fixed-frame tracks and explicit selection state."""
+        def live_tracks_response() -> JSONResponse:
             tracker = self.tracker
             if not tracker:
                 return JSONResponse(
@@ -258,6 +333,177 @@ class TrackerControlApi:
                 },
                 status_code=200,
             )
+
+        @app.get("/tracks")
+        async def tracks_page(request: Request):
+            """Serve replay HTML to browsers while preserving the legacy JSON API."""
+            if "text/html" in request.headers.get("accept", ""):
+                return FileResponse(Path(self.config.static_dir) / "tracks.html")
+            return live_tracks_response()
+
+        @app.get("/api/tracks/live")
+        async def get_tracks():
+            """Return all fixed-frame tracks and explicit selection state."""
+            return live_tracks_response()
+
+        @app.get("/api/track-recordings/status")
+        async def recording_status():
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse({"recording": False, "active": None}, status_code=200)
+            return JSONResponse(tracker.get_track_recording_status(), status_code=200)
+
+        @app.post("/api/track-recordings/start")
+        async def start_recording():
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    {"success": False, "message": "Tracker not initialized"},
+                    status_code=503,
+                )
+            if not bool(getattr(tracker, "world_tracking", False)):
+                return JSONResponse(
+                    {"success": False, "message": "World tracking is disabled"},
+                    status_code=409,
+                )
+            if not bool(getattr(tracker, "world_api_recording_enabled", False)):
+                return JSONResponse(
+                    {"success": False, "message": "Remote track recording is disabled"},
+                    status_code=403,
+                )
+            try:
+                result = await run_in_threadpool(tracker.start_track_recording)
+                return JSONResponse(result, status_code=201)
+            except RuntimeError as exc:
+                return JSONResponse(
+                    {"success": False, "message": str(exc)}, status_code=409
+                )
+            except OSError as exc:
+                return JSONResponse(
+                    {"success": False, "message": str(exc)}, status_code=507
+                )
+
+        @app.post("/api/track-recordings/stop")
+        async def stop_recording():
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    {"success": False, "message": "Tracker not initialized"},
+                    status_code=503,
+                )
+            if not bool(getattr(tracker, "world_api_recording_enabled", False)):
+                return JSONResponse(
+                    {"success": False, "message": "Remote track recording is disabled"},
+                    status_code=403,
+                )
+            try:
+                result = await run_in_threadpool(tracker.stop_track_recording)
+                return JSONResponse(result, status_code=200)
+            except RuntimeError as exc:
+                return JSONResponse(
+                    {"success": False, "message": str(exc)}, status_code=409
+                )
+            except OSError as exc:
+                return JSONResponse(
+                    {"success": False, "message": str(exc)}, status_code=507
+                )
+
+        @app.get("/api/track-recordings")
+        async def list_recordings():
+            tracker = self.tracker
+            if tracker and not bool(
+                getattr(tracker, "world_api_recording_enabled", False)
+            ):
+                return JSONResponse(
+                    {"success": False, "message": "Remote track replay is disabled"},
+                    status_code=403,
+                )
+            recordings = (
+                await run_in_threadpool(tracker.list_track_recordings)
+                if tracker else []
+            )
+            return JSONResponse({"recordings": recordings}, status_code=200)
+
+        @app.get("/api/track-recordings/{recording_id}")
+        async def load_recording(recording_id: str):
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    {"success": False, "message": "Tracker not initialized"},
+                    status_code=503,
+                )
+            if not bool(getattr(tracker, "world_api_recording_enabled", False)):
+                return JSONResponse(
+                    {"success": False, "message": "Remote track replay is disabled"},
+                    status_code=403,
+                )
+            if replay_lock.locked():
+                return JSONResponse(
+                    {"success": False, "message": "Replay service is busy"},
+                    status_code=429,
+                )
+            async with replay_lock:
+                try:
+                    payload = await run_in_threadpool(
+                        _call_and_serialize_json,
+                        tracker.load_track_recording,
+                        recording_id,
+                    )
+                    return Response(payload, media_type="application/json", status_code=200)
+                except KeyError:
+                    return JSONResponse(
+                        {"success": False, "message": "Recording not found"},
+                        status_code=404,
+                    )
+                except RuntimeError as exc:
+                    return JSONResponse(
+                        {"success": False, "message": str(exc)}, status_code=409
+                    )
+                except ValueError as exc:
+                    return JSONResponse(
+                        {"success": False, "message": str(exc)}, status_code=422
+                    )
+
+        @app.post("/api/track-recordings/{recording_id}/reprocess")
+        async def reprocess_recording(recording_id: str, request: dict):
+            tracker = self.tracker
+            if not tracker:
+                return JSONResponse(
+                    {"success": False, "message": "Tracker not initialized"},
+                    status_code=503,
+                )
+            if not bool(getattr(tracker, "world_api_recording_enabled", False)):
+                return JSONResponse(
+                    {"success": False, "message": "Remote track replay is disabled"},
+                    status_code=403,
+                )
+            if replay_lock.locked():
+                return JSONResponse(
+                    {"success": False, "message": "Replay service is busy"},
+                    status_code=429,
+                )
+            async with replay_lock:
+                try:
+                    payload = await run_in_threadpool(
+                        _call_and_serialize_json,
+                        tracker.reprocess_track_recording,
+                        recording_id,
+                        request,
+                    )
+                    return Response(payload, media_type="application/json", status_code=200)
+                except RuntimeError as exc:
+                    return JSONResponse(
+                        {"success": False, "message": str(exc)}, status_code=429
+                    )
+                except KeyError:
+                    return JSONResponse(
+                        {"success": False, "message": "Recording not found"},
+                        status_code=404,
+                    )
+                except ValueError as exc:
+                    return JSONResponse(
+                        {"success": False, "message": str(exc)}, status_code=400
+                    )
 
         @app.post("/tracks/select")
         async def select_track(request: dict):

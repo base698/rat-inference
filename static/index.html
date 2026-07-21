@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <link rel="icon" href="data:,">
     <title>Camera Tracker Control</title>
     <style>
         body {
@@ -211,6 +213,28 @@
         button.track-clear:hover {
             background-color: #5a6268;
         }
+        button.recording { background-color: #c62828; }
+        button.recording:hover { background-color: #a51f1f; }
+        .recording-panel {
+            margin: 16px 0;
+            padding: 14px;
+            border: 1px solid #d7dce2;
+            border-radius: 8px;
+            background: #fff;
+        }
+        .recording-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            margin-right: 7px;
+            border-radius: 50%;
+            background: #9e9e9e;
+        }
+        .recording-dot.active {
+            background: #e53935;
+            box-shadow: 0 0 0 4px rgba(229,57,53,.15);
+        }
+        .track-link { color: #006da8; font-weight: bold; }
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
@@ -344,6 +368,8 @@
         const worldTrackCache = new Map();
         const WORLD_TRACK_FADE_MS = 10000;
         window.pendingWorldViewInit = false;
+        let worldTracking = false;
+        let recordingEnabled = false;
 
         // Initialize from server on page load
         async function initializeConfig() {
@@ -360,6 +386,8 @@
                 desiredYaw = config.initial_yaw;
                 desiredPitch = config.initial_pitch;
                 enableTrigger = config.enable_trigger;
+                worldTracking = Boolean(config.world_tracking);
+                recordingEnabled = Boolean(config.track_recording_enabled);
 
                 // Update slider values and ranges
                 const yawSlider = document.getElementById('yawSlider');
@@ -374,8 +402,10 @@
                 pitchSlider.value = desiredPitch;
                 document.getElementById('pitchValue').textContent = desiredPitch;
 
-                // Enable/disable trigger button
+                // Enable/disable trigger and recording controls
                 document.getElementById('triggerButton').disabled = !enableTrigger;
+                document.getElementById('startRecordingButton').disabled = !recordingEnabled || !worldTracking;
+                await refreshRecordingStatus();
             } catch (error) {
                 console.error('Failed to load config:', error);
             }
@@ -531,6 +561,45 @@
                     status.style.display = 'none';
                 }, 1200);
             }
+        }
+
+        async function refreshRecordingStatus() {
+            try {
+                const response = await fetch('/api/track-recordings/status');
+                const state = await response.json();
+                const active = Boolean(state.recording);
+                const available = state.available !== false;
+                document.getElementById('recordingDot').classList.toggle('active', active);
+                document.getElementById('recordingState').textContent = !available
+                    ? `Recording storage unavailable: ${state.error || 'unknown error'}`
+                    : (active
+                        ? `Recording ${state.active?.id || ''} · ${state.active?.frame_count || 0} frames`
+                        : (!worldTracking ? 'World tracking is disabled'
+                            : (recordingEnabled ? 'Ready to record' : 'Recording disabled in config')));
+                document.getElementById('startRecordingButton').disabled = active || !available || !recordingEnabled || !worldTracking;
+                document.getElementById('stopRecordingButton').disabled = !active;
+            } catch (error) {
+                document.getElementById('recordingState').textContent = 'Recording status unavailable';
+            }
+        }
+
+        async function setRecording(action) {
+            const status = document.getElementById('recordingMessage');
+            try {
+                const response = await fetch(`/api/track-recordings/${action}`, { method: 'POST' });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message || `Could not ${action} recording`);
+                status.className = 'servo-status success';
+                status.textContent = action === 'start'
+                    ? `Recording started: ${result.id}`
+                    : `Saved ${result.frame_count} frames to ${result.id}`;
+            } catch (error) {
+                status.className = 'servo-status error';
+                status.textContent = error.message;
+            }
+            status.style.display = 'block';
+            await refreshRecordingStatus();
+            setTimeout(() => { status.style.display = 'none'; }, 2500);
         }
 
         function updateDetectionInfo(data) {
@@ -1032,6 +1101,7 @@
 
             getStatus();
             setInterval(getStatus, 2000);
+            setInterval(refreshRecordingStatus, 2000);
 
             // Transfer canvas control to worker
             const canvas = document.getElementById('cameraStream');
@@ -1162,6 +1232,15 @@
                     <h3>World View</h3>
                     <div id="worldView3d"></div>
                     <div id="worldViewStatus" class="world-view-status">Waiting for world state</div>
+                </div>
+
+                <div class="recording-panel">
+                    <h3>Track Recording</h3>
+                    <p><span id="recordingDot" class="recording-dot"></span><span id="recordingState">Checking...</span></p>
+                    <button id="startRecordingButton" class="recording" onclick="setRecording('start')" disabled>Start recording</button>
+                    <button id="stopRecordingButton" class="belief" onclick="setRecording('stop')" disabled>Stop &amp; save</button>
+                    <a class="track-link" href="/tracks">Open track replay →</a>
+                    <div id="recordingMessage" class="servo-status" style="display:none"></div>
                 </div>
 
                 <div class="keyboard-info">
