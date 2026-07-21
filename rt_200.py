@@ -68,9 +68,9 @@ except ImportError:
 try:
     import RPi.GPIO as GPIO
     GPIO_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     GPIO_AVAILABLE = False
-    print("GPIO library not available - trigger servo features disabled")
+    print(f"GPIO library not available - trigger servo features disabled ({exc})")
 
 # Try importing YOLO
 try:
