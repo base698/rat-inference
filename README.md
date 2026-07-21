@@ -183,6 +183,12 @@ Jetson: CSI stereo camera input, TensorRT model inference, Feetech servos, and
 angular-belief tracking. Keep world tracking opt-in until its target identity and
 reacquisition behavior are reliable enough for normal use.
 
+The current CSI helper captures the IMX219 cameras at `1640x1232` and scales to
+the app's `640x480` frame. That gives a wider 4:3 field of view than the old
+`1280x720` input mode while keeping the web/video and inference frame size
+unchanged. Stereo calibration should be recaptured in this mode before trusting
+depth/world measurements.
+
 #### Stereo Depth + Laser Tracking
 
 Current working command for CSI stereo cameras, Feetech tracking servos, stereo depth, and laser/camera vertical compensation without detection:

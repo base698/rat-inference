@@ -26,11 +26,13 @@ class TrackReplayUiContractTests(unittest.TestCase):
         self.assertIn("const replayFps =", script)
         self.assertIn("playbackStartIndex", script)
 
-    def test_main_ui_exposes_start_stop_and_replay_link(self):
+    def test_main_ui_exposes_record_toggle_and_replay_link(self):
         html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('id="startRecordingButton"', html)
-        self.assertIn('id="stopRecordingButton"', html)
+        self.assertIn('id="recordToggleButton"', html)
+        self.assertIn("toggleRecording()", html)
+        self.assertNotIn('id="startRecordingButton"', html)
+        self.assertNotIn('id="stopRecordingButton"', html)
         self.assertIn('href="/tracks"', html)
         self.assertIn("/api/track-recordings/${action}", html)
         self.assertIn("/static/vendor/three.module.js", html)

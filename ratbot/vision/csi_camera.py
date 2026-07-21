@@ -9,12 +9,23 @@ import threading
 import queue
 
 class CSICameraCapture:
-    def __init__(self, sensor_id=0, width=640, height=480, fps=30, flip_method=2):
+    def __init__(
+        self,
+        sensor_id=0,
+        width=640,
+        height=480,
+        fps=30,
+        flip_method=2,
+        capture_width=1640,
+        capture_height=1232,
+    ):
         self.sensor_id = sensor_id
         self.width = width
         self.height = height
         self.fps = fps
         self.flip_method = flip_method
+        self.capture_width = capture_width
+        self.capture_height = capture_height
         self.frame_queue = queue.Queue(maxsize=2)
         self.running = False
         self.process = None
@@ -26,7 +37,12 @@ class CSICameraCapture:
         gst_cmd = [
             'gst-launch-1.0', '-q',  # -q for quiet (less stderr noise)
             'nvarguscamerasrc', f'sensor-id={self.sensor_id}',
-            '!', f'video/x-raw(memory:NVMM), width=1280, height=720, format=NV12, framerate={self.fps}/1',
+            '!',
+            (
+                'video/x-raw(memory:NVMM), '
+                f'width={self.capture_width}, height={self.capture_height}, '
+                f'format=NV12, framerate={self.fps}/1'
+            ),
             '!', 'nvvidconv', f'flip-method={self.flip_method}',
             '!', f'video/x-raw, width={self.width}, height={self.height}, format=BGRx',
             '!', 'videoconvert',
