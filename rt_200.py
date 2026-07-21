@@ -88,9 +88,9 @@ try:
     from lerobot.motors.feetech import FeetechMotorsBus
     from lerobot.motors.motors_bus import Motor, MotorNormMode
     FEETECH_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     FEETECH_AVAILABLE = False
-    print("Feetech libraries not available - servo tracking features disabled")
+    print(f"Feetech libraries not available - servo tracking features disabled ({exc})")
 
 # Load configuration from YAML file
 def load_config(config_path="config.yaml"):
