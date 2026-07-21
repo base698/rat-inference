@@ -872,6 +872,17 @@ class CameraTracker:
             print(f"Failed to load model: {e}")
             self.model = None
 
+    def _effective_inference_device(self, runtime_device):
+        """Return the device to expose after first inference."""
+        if runtime_device is not None:
+            return str(runtime_device)
+        if not self.inference_device:
+            return None
+        device = str(self.inference_device)
+        if device.isdigit():
+            return f"cuda:{device}"
+        return device
+
     def _detection_snapshot_files(self):
         try:
             names = os.listdir(self.detections_dir)
@@ -1308,11 +1319,11 @@ class CameraTracker:
             )
             if not self._runtime_device_logged:
                 runtime_device = getattr(self.model, "device", None)
-                self.inference_runtime_device = (
-                    None if runtime_device is None else str(runtime_device)
+                self.inference_runtime_device = self._effective_inference_device(
+                    runtime_device
                 )
                 print(
-                    f"YOLO runtime device: {self.inference_runtime_device or 'unknown'}",
+                    f"YOLO runtime/effective device: {self.inference_runtime_device or 'unknown'}",
                     flush=True,
                 )
                 self._runtime_device_logged = True
