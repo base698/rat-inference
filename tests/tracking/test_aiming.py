@@ -224,6 +224,49 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
 
         self.assertAlmostEqual(belief["pitch"], robot.current_pitch, delta=1)
 
+    def test_stale_selected_center_falls_back_to_world_aim(self):
+        robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)
+        noisy_position = self.transformer.camera_to_base(
+            [0, -300, 1000],
+            robot.current_yaw,
+            robot.current_pitch,
+        )
+        self.add_track(noisy_position, center=(320, 340))
+        adapter = WorldTrackBeliefAdapter(
+            self.manager,
+            self.transformer,
+            aim_latency_seconds=0.0,
+            max_age_seconds=1.0,
+            robot=robot,
+            clock=lambda: 10.4,
+        )
+
+        belief = adapter.get_active()
+
+        self.assertLess(belief["pitch"], robot.current_pitch)
+
+    def test_missed_selected_center_falls_back_to_world_aim(self):
+        robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)
+        noisy_position = self.transformer.camera_to_base(
+            [0, -300, 1000],
+            robot.current_yaw,
+            robot.current_pitch,
+        )
+        self.add_track(noisy_position, center=(320, 340))
+        self.manager.update([], timestamp=10.05)
+        adapter = WorldTrackBeliefAdapter(
+            self.manager,
+            self.transformer,
+            aim_latency_seconds=0.0,
+            max_age_seconds=1.0,
+            robot=robot,
+            clock=lambda: 10.1,
+        )
+
+        belief = adapter.get_active()
+
+        self.assertLess(belief["pitch"], robot.current_pitch)
+
 
 if __name__ == "__main__":
     unittest.main()

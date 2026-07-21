@@ -27,7 +27,7 @@ class WorldTrackBeliefAdapter:
         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
         self.max_age_seconds = max(0.0, float(max_age_seconds))
         self.fresh_center_max_age_seconds = (
-            self.max_age_seconds
+            min(self.max_age_seconds, 0.20)
             if fresh_center_max_age_seconds is None
             else max(0.0, float(fresh_center_max_age_seconds))
         )
@@ -146,6 +146,7 @@ class WorldTrackBeliefAdapter:
             self.robot is not None
             and hasattr(self.robot, "pixel_to_target_position")
             and track.center is not None
+            and track.misses == 0
             and age <= self.fresh_center_max_age_seconds
         ):
             depth_mm = None
