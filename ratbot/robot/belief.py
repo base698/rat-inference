@@ -419,12 +419,26 @@ class AngularBeliefController:
         if desired_yaw == self.robot.current_yaw and desired_pitch == self.robot.current_pitch:
             return
 
+        aim_debug = ""
+        if belief.get("aim_source"):
+            point = belief.get("point_camera_mm")
+            if point is not None:
+                aim_debug = (
+                    f", aim={belief['aim_source']} "
+                    f"cam=({point[0]:.0f},{point[1]:.0f},{point[2]:.0f})mm "
+                    f"err=({belief.get('yaw_error_degrees', 0.0):.1f}°, "
+                    f"{belief.get('pitch_error_degrees', 0.0):.1f}°)"
+                )
+            else:
+                aim_debug = f", aim={belief['aim_source']}"
+
         print(
             "   Belief control: "
             f"belief=({belief['yaw']:.1f}, {belief['pitch']:.1f}, conf={belief['confidence']:.2f}, age={belief['age']:.2f}s), "
             f"vel=({belief['yaw_velocity']:.0f}, {belief['pitch_velocity']:.0f}) raw/s, pred={belief['prediction_dt']:.2f}s, "
             f"error_raw=({yaw_error_raw:.1f}, {pitch_error_raw:.1f}), "
             f"move=({self.robot.current_yaw}->{desired_yaw}, {self.robot.current_pitch}->{desired_pitch})"
+            f"{aim_debug}"
         )
 
         self.robot.set_yaw(desired_yaw)

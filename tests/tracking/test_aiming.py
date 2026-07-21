@@ -182,7 +182,7 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
         self.assertAlmostEqual(belief["yaw"], robot.current_yaw, delta=1)
         self.assertGreater(belief["pitch"], robot.current_pitch)
 
-    def test_turret_relative_aim_uses_calibrated_crosshair_not_optical_center(self):
+    def test_turret_relative_aim_uses_direct_world_ray_not_crosshair_projection(self):
         robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)
         position = self.transformer.camera_to_base(
             [0, 100, 1000],
@@ -201,7 +201,8 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
 
         belief = adapter.get_active()
 
-        self.assertAlmostEqual(belief["pitch"], robot.current_pitch, delta=1)
+        self.assertGreater(belief["pitch"], robot.current_pitch)
+        self.assertEqual(belief["aim_source"], "world_ray")
 
     def test_robot_world_aim_ignores_fresh_center_by_default(self):
         robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)

@@ -51,11 +51,9 @@ class WorldTrackBeliefAdapter:
         yaw_error_degrees = math.degrees(math.atan2(x, z))
         pitch_error_degrees = math.degrees(math.atan2(y, z))
         yaw_delta_raw = self.robot.angle_to_servo_raw(yaw_error_degrees, axis="yaw")
-        pitch_delta_raw = int(
-            round(
-                self.robot.angle_to_servo_raw(pitch_error_degrees, axis="pitch")
-                * self._pitch_tracking_scale()
-            )
+        pitch_delta_raw = self.robot.angle_to_servo_raw(
+            pitch_error_degrees,
+            axis="pitch",
         )
 
         config = self.transformer.config
@@ -74,6 +72,9 @@ class WorldTrackBeliefAdapter:
             "pitch": int(round(pitch)),
             "yaw_degrees": yaw_error_degrees,
             "pitch_degrees": pitch_error_degrees,
+            "yaw_delta_raw": yaw_delta_raw,
+            "pitch_delta_raw": pitch_delta_raw,
+            "aim_source": "world_ray",
         }
 
     def _camera_intrinsics(self):
@@ -136,7 +137,9 @@ class WorldTrackBeliefAdapter:
         if not all(math.isfinite(value) for value in (x, y, z)) or z <= 1e-6:
             raise ValueError("selected world target is outside the current camera frame")
 
-        return self._crosshair_relative_aim(x, y, z)
+        aim = self._optical_axis_aim(x, y, z)
+        aim["point_camera_mm"] = (x, y, z)
+        return aim
 
     def _aim_for_position(self, position_base_mm):
         if self.robot is None:
@@ -220,4 +223,8 @@ class WorldTrackBeliefAdapter:
             "track_id": track.id,
             "position_mm": track.position.copy(),
             "velocity_mm_s": track.velocity.copy(),
+            "aim_source": aim.get("aim_source"),
+            "yaw_error_degrees": aim.get("yaw_degrees"),
+            "pitch_error_degrees": aim.get("pitch_degrees"),
+            "point_camera_mm": aim.get("point_camera_mm"),
         }

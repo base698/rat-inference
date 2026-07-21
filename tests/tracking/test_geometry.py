@@ -66,6 +66,15 @@ class TurretFrameTransformerTests(unittest.TestCase):
             atol=1e-6,
         )
 
+    def test_negative_yaw_sign_matches_raw_increase_turning_right(self):
+        transformer = self.make_transformer(yaw_sign=-1.0)
+
+        yaw_right = transformer.camera_to_base([0, 0, 1000], 3100, 250)
+        aim_right = transformer.base_position_to_servo_raw([1000, -1000, 0])
+
+        np.testing.assert_allclose(yaw_right, [0, -1000, 0], atol=1e-6)
+        self.assertGreater(aim_right["yaw"], 2200)
+
     def test_stationary_base_point_is_invariant_across_camera_pose_changes(self):
         transformer = self.make_transformer()
         fixed_base = np.array([1600.0, 400.0, -120.0])

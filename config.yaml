@@ -134,7 +134,7 @@ tracking:
     pitch_center_raw: 250.0
     yaw_raw_per_degree: 8.333333
     pitch_raw_per_degree: 9.072727
-    yaw_sign: 1.0       # Turret base yaw sign; keep aligned with observed world tracking tests
+    yaw_sign: -1.0      # Raw yaw increase turns the camera right on this rig
     pitch_sign: -1.0    # Current rig: raw increase points downward
     camera_translation_mm: [0.0, 0.0, 0.0]  # MEASURE pivot -> camera optical center
     camera_mount_rpy_degrees: [0.0, 0.0, 0.0]

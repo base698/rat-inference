@@ -428,6 +428,8 @@ requires an explicit stable-ID selection before the controller can move.
 - Positive yaw turns left; positive pitch points up.
 - The frame is fixed only while the physical turret base is stationary. It is
   not a global/map frame and must be reset if the base is moved.
+- The current RT-200 config sets `tracking.world_frame.yaw_sign: -1.0` because
+  raw yaw increases turn this turret right.
 
 ### Required Hardware Calibration
 
