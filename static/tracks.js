@@ -130,6 +130,7 @@
     $('gateDistance').value = p.gate_distance_mm ?? 750;
     $('maxMisses').value = p.max_misses ?? 5;
     $('deleteAfter').value = p.delete_after_seconds ?? 1.5;
+    $('reidentifyAfter').value = p.reidentify_after_seconds ?? 8;
     $('processNoise').value = p.process_acceleration_std_mm_s2 ?? 300;
     $('confidenceDecay').value = p.confidence_decay ?? 0.85;
   }
@@ -140,6 +141,7 @@
       gate_distance_mm: Number($('gateDistance').value),
       max_misses: Number($('maxMisses').value),
       delete_after_seconds: Number($('deleteAfter').value),
+      reidentify_after_seconds: Number($('reidentifyAfter').value),
       process_acceleration_std_mm_s2: Number($('processNoise').value),
       confidence_decay: Number($('confidenceDecay').value),
     };

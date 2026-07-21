@@ -82,6 +82,7 @@ class TrackRecordingStoreTests(unittest.TestCase):
             "gate_distance_mm": 100.0,
             "max_misses": 5,
             "delete_after_seconds": 1.5,
+            "reidentify_after_seconds": 8.0,
             "process_acceleration_std_mm_s2": 300.0,
             "confidence_decay": 0.85,
         })
@@ -90,6 +91,7 @@ class TrackRecordingStoreTests(unittest.TestCase):
             "gate_distance_mm": 100.0,
             "max_misses": 5,
             "delete_after_seconds": 1.5,
+            "reidentify_after_seconds": 8.0,
             "process_acceleration_std_mm_s2": 300.0,
             "confidence_decay": 0.85,
         })
@@ -97,6 +99,7 @@ class TrackRecordingStoreTests(unittest.TestCase):
         self.assertEqual(tentative["frames"][-1]["tracks"][0]["status"], "tentative")
         self.assertEqual(confirmed["frames"][-1]["tracks"][0]["status"], "confirmed")
         self.assertEqual(confirmed["parameters"]["confirm_hits"], 2)
+        self.assertEqual(confirmed["parameters"]["reidentify_after_seconds"], 8.0)
 
         gate_recording = self.store.start({})
         self.store.append(self.frame(20.0, 1000.0))
@@ -115,6 +118,7 @@ class TrackRecordingStoreTests(unittest.TestCase):
         for parameters in (
             {"max_misses": 101},
             {"delete_after_seconds": 0.0},
+            {"reidentify_after_seconds": 31.0},
             {"gate_distance_mm": 10 ** 400},
         ):
             with self.subTest(parameters=parameters), self.assertRaises(ValueError):

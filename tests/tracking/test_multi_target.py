@@ -178,6 +178,44 @@ class MultiTargetTrackerTests(unittest.TestCase):
         self.assertEqual(expired, [])
         self.assertIsNone(tracker.selected_track_id)
 
+    def test_dormant_track_reidentifies_with_old_id_inside_window(self):
+        tracker = self.make_tracker(
+            confirm_hits=1,
+            delete_after_seconds=0.25,
+            reidentify_after_seconds=8.0,
+            auto_select=True,
+        )
+        original = tracker.update([detection(1000, timestamp=0.0)], timestamp=0.0)[0]
+        self.assertEqual(tracker.selected_track_id, original.id)
+
+        expired = tracker.update([], timestamp=0.3)
+        self.assertEqual(expired, [])
+        self.assertIsNone(tracker.selected_track_id)
+
+        reacquired = tracker.update([detection(1025, timestamp=1.0)], timestamp=1.0)
+
+        self.assertEqual([track.id for track in reacquired], [original.id])
+        self.assertEqual(reacquired[0].status, "confirmed")
+        self.assertEqual(reacquired[0].misses, 0)
+        self.assertEqual(tracker.selected_track_id, original.id)
+        self.assertTrue(tracker.last_assignments[0]["reidentified"])
+
+    def test_dormant_track_does_not_reidentify_after_window_expires(self):
+        tracker = self.make_tracker(
+            confirm_hits=1,
+            delete_after_seconds=0.25,
+            reidentify_after_seconds=0.5,
+            auto_select=False,
+        )
+        original = tracker.update([detection(1000, timestamp=0.0)], timestamp=0.0)[0]
+        tracker.update([], timestamp=0.3)
+
+        reacquired = tracker.update([detection(1025, timestamp=1.0)], timestamp=1.0)
+
+        self.assertEqual(len(reacquired), 1)
+        self.assertNotEqual(reacquired[0].id, original.id)
+        self.assertNotIn("reidentified", tracker.last_assignments[0])
+
     def test_explicit_clear_selection_suppresses_future_auto_selection(self):
         tracker = self.make_tracker(confirm_hits=1, auto_select=True)
         first = tracker.update([detection(100)], timestamp=0.0)[0]

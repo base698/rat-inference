@@ -348,6 +348,11 @@ tracker above for normal live tracking.
 YOLO detection with valid stereo depth into a fixed frame attached to the turret
 base, predicts independent constant-velocity Kalman tracks, and preserves stable
 IDs through short occlusions when the depth and association data are good.
+Confirmed tracks that age out of the visible set are kept in a dormant
+re-identification pool for `tracking.world_frame.reidentify_after_seconds`
+(currently `8.0` seconds). If a later detection matches the dormant track's
+predicted 3D position and class, the old ID is restored instead of creating a
+new target.
 Current hardware testing shows target IDs can still churn or get lost, so this
 mode should be treated as visualization/research work rather than production
 tracking. Shadow mode computes, overlays, exposes, and logs tracks but does not
@@ -437,8 +442,8 @@ Open `/tracks` for the replay workbench. It provides:
 - a fixed turret-base 3D view with tracks, trails, measurements, velocity vectors,
   and `x forward / y left / z up` axes;
 - parameterized reprocessing using saved raw 3D observations. Confirmation hits,
-  association gate, miss/delete limits, process noise, and confidence decay can be
-  changed without commanding the robot.
+  association gate, miss/delete limits, re-identification window, process noise,
+  and confidence decay can be changed without commanding the robot.
 
 Routes:
 
@@ -494,6 +499,9 @@ Deferred deliberately:
 - Optimized Hungarian/Jonker-Volgenant association and appearance embeddings for
   dense scenes. The current exact dynamic-programming assignment prioritizes
   cardinality then distance and is intended for a small number of physical targets.
+- Appearance-based re-identification. The current re-ID path only uses class
+  compatibility plus constant-velocity 3D prediction, so similar nearby objects
+  can still swap when detections are ambiguous.
 - Spherical occupancy grids and information-gain scanning. A dense fixed
   occupancy volume is not useful until the tracking frame and base-motion model
   are proven on hardware.

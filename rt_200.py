@@ -332,6 +332,7 @@ class CameraTracker:
                  world_tracking=False, world_gate_distance_mm=750.0,
                  world_confirm_hits=3, world_max_misses=5,
                  world_delete_after_seconds=4.0,
+                 world_reidentify_after_seconds=8.0,
                  world_process_acceleration_std_mm_s2=300.0,
                  world_min_depth_confidence=0.2,
                  world_aim_latency_seconds=0.12,
@@ -622,6 +623,7 @@ class CameraTracker:
                 confirm_hits=int(world_confirm_hits),
                 max_misses=int(world_max_misses),
                 delete_after_seconds=float(world_delete_after_seconds),
+                reidentify_after_seconds=float(world_reidentify_after_seconds),
                 process_acceleration_std_mm_s2=float(
                     world_process_acceleration_std_mm_s2
                 ),
@@ -1040,6 +1042,7 @@ class CameraTracker:
             "confirm_hits": config.confirm_hits,
             "max_misses": config.max_misses,
             "delete_after_seconds": config.delete_after_seconds,
+            "reidentify_after_seconds": config.reidentify_after_seconds,
             "process_acceleration_std_mm_s2": config.process_acceleration_std_mm_s2,
             "confidence_decay": config.confidence_decay,
             "min_depth_confidence": self.world_min_depth_confidence,
@@ -1437,6 +1440,13 @@ def main():
         world_status = "ENABLED" if settings.world_tracking else "DISABLED (legacy angular mode)"
         print(f"World-frame tracking: {world_status}")
         if settings.world_tracking:
+            world_config = tracker.world_tracker.config
+            print(
+                "World-frame ID retention: "
+                f"gate={world_config.gate_distance_mm:g}mm, "
+                f"delete={world_config.delete_after_seconds:g}s, "
+                f"re-id={world_config.reidentify_after_seconds:g}s"
+            )
             print(
                 "WARNING: world-frame motion assumes a stationary base and "
                 "verified servo signs/scales plus camera extrinsics"

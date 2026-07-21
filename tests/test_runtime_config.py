@@ -183,6 +183,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertTrue(enabled.world_tracking)
         self.assertTrue(enabled.stereo_mode)
         self.assertEqual(enabled.world_gate_distance_mm, 750.0)
+        self.assertEqual(enabled.world_reidentify_after_seconds, 8.0)
         self.assertEqual(enabled.world_camera_translation_mm, (0.0, 0.0, 0.0))
         self.assertEqual(enabled.world_camera_mount_rpy_degrees, (0.0, 0.0, 0.0))
         self.assertEqual(enabled.world_pitch_sign, -1.0)

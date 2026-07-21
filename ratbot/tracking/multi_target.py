@@ -20,6 +20,7 @@ class TrackManagerConfig:
     confirm_hits: int = 3
     max_misses: int = 5
     delete_after_seconds: float = 1.5
+    reidentify_after_seconds: float = 8.0
     process_acceleration_std_mm_s2: float = 300.0
     auto_select: bool = True
     confidence_decay: float = 0.85
@@ -28,6 +29,7 @@ class TrackManagerConfig:
         finite_values = (
             self.gate_distance_mm,
             self.delete_after_seconds,
+            self.reidentify_after_seconds,
             self.process_acceleration_std_mm_s2,
             self.confidence_decay,
         )
@@ -37,7 +39,11 @@ class TrackManagerConfig:
             raise ValueError("gate_distance_mm must be positive")
         if self.confirm_hits < 1 or self.max_misses < 0:
             raise ValueError("track hit/miss limits are invalid")
-        if self.delete_after_seconds < 0 or self.process_acceleration_std_mm_s2 < 0:
+        if (
+            self.delete_after_seconds < 0
+            or self.reidentify_after_seconds < 0
+            or self.process_acceleration_std_mm_s2 < 0
+        ):
             raise ValueError("time and process-noise values cannot be negative")
         if not 0 <= self.confidence_decay <= 1:
             raise ValueError("confidence_decay must be between zero and one")
@@ -57,6 +63,7 @@ class _ManagedTrack:
     status: str = "tentative"
     bbox: Optional[tuple[int, int, int, int]] = None
     center: Optional[tuple[int, int]] = None
+    selected_when_dormant: bool = False
 
 
 class MultiTargetTracker:
@@ -65,6 +72,7 @@ class MultiTargetTracker:
     def __init__(self, config: TrackManagerConfig):
         self.config = config
         self._tracks: dict[int, _ManagedTrack] = {}
+        self._dormant_tracks: dict[int, _ManagedTrack] = {}
         self._next_id = 1
         self.selected_track_id: Optional[int] = None
         self._auto_select_suppressed = False
@@ -168,6 +176,122 @@ class MultiTargetTracker:
         matched_detections = {index for _, index, _ in matches}
         return matches, matched_tracks, matched_detections
 
+    def _dormant_match_cost(
+        self,
+        track: _ManagedTrack,
+        detection: Detection3D,
+        timestamp: float,
+    ) -> Optional[tuple[float, float]]:
+        if not self._classes_compatible(track, detection):
+            return None
+        missing_seconds = max(0.0, timestamp - track.last_seen_time)
+        if missing_seconds > self.config.reidentify_after_seconds:
+            return None
+        predicted = track.filter.predicted_state(timestamp)
+        predicted_covariance = track.filter.predicted_covariance(timestamp)
+        distance = float(
+            np.linalg.norm(predicted[:3] - detection.position_base_mm)
+        )
+        position_std = float(
+            math.sqrt(max(0.0, np.trace(predicted_covariance[:3, :3]) / 3.0))
+        )
+        gate = max(
+            self.config.gate_distance_mm,
+            min(
+                self.config.gate_distance_mm * 2.0,
+                self.config.gate_distance_mm + position_std,
+            ),
+        )
+        if distance > gate:
+            return None
+        age_ratio = (
+            missing_seconds / self.config.reidentify_after_seconds
+            if self.config.reidentify_after_seconds > 0
+            else 1.0
+        )
+        return (distance / gate + 0.15 * age_ratio, distance)
+
+    def _associate_dormant(
+        self,
+        detections: list[Detection3D],
+        available_detection_ids: set[int],
+        timestamp: float,
+    ):
+        candidates: list[tuple[float, float, int, int]] = []
+        for track_id, track in sorted(self._dormant_tracks.items()):
+            for detection_index in sorted(available_detection_ids):
+                cost = self._dormant_match_cost(
+                    track, detections[detection_index], timestamp
+                )
+                if cost is not None:
+                    score, distance = cost
+                    candidates.append((score, distance, track_id, detection_index))
+        candidates.sort()
+
+        matches = []
+        matched_tracks: set[int] = set()
+        matched_detections: set[int] = set()
+        for score, distance, track_id, detection_index in candidates:
+            if track_id in matched_tracks or detection_index in matched_detections:
+                continue
+            matches.append((track_id, detection_index, distance, score))
+            matched_tracks.add(track_id)
+            matched_detections.add(detection_index)
+        return matches, matched_tracks, matched_detections
+
+    def _prune_dormant(self, timestamp: float) -> None:
+        if self.config.reidentify_after_seconds <= 0:
+            self._dormant_tracks.clear()
+            return
+        for track_id, track in list(self._dormant_tracks.items()):
+            missing_seconds = max(0.0, timestamp - track.last_seen_time)
+            if missing_seconds > self.config.reidentify_after_seconds:
+                del self._dormant_tracks[track_id]
+
+    def _move_to_dormant(
+        self,
+        track_id: int,
+        track: _ManagedTrack,
+        timestamp: float,
+    ) -> bool:
+        missing_seconds = max(0.0, timestamp - track.last_seen_time)
+        if (
+            self.config.reidentify_after_seconds <= 0
+            or track.status not in {"confirmed", "lost"}
+            or missing_seconds > self.config.reidentify_after_seconds
+        ):
+            return False
+        track.selected_when_dormant = self.selected_track_id == track_id
+        self._dormant_tracks[track_id] = track
+        return True
+
+    def _apply_detection_update(
+        self,
+        track: _ManagedTrack,
+        detection: Detection3D,
+    ) -> None:
+        track.filter.update(
+            detection.position_base_mm,
+            detection.covariance_base,
+        )
+        track.confidence = min(
+            1.0,
+            max(
+                detection.confidence,
+                track.confidence * 0.75 + detection.confidence * 0.35,
+            ),
+        )
+        was_confirmed = track.status in {"confirmed", "lost"}
+        track.last_seen_time = detection.measurement_time
+        track.hits += 1
+        track.consecutive_hits += 1
+        track.misses = 0
+        track.bbox = detection.bbox
+        track.center = detection.center
+        if was_confirmed or track.consecutive_hits >= self.config.confirm_hits:
+            track.status = "confirmed"
+        track.selected_when_dormant = False
+
     def _new_track(self, detection: Detection3D) -> _ManagedTrack:
         track = _ManagedTrack(
             id=self._next_id,
@@ -200,6 +324,7 @@ class MultiTargetTracker:
             if self.last_update_time is not None and timestamp < self.last_update_time:
                 raise ValueError("tracker updates must not move backward in time")
             self.last_update_time = timestamp
+            self._prune_dormant(timestamp)
             for track in self._tracks.values():
                 track.filter.predict_to(timestamp)
 
@@ -208,26 +333,7 @@ class MultiTargetTracker:
             for track_id, detection_index, distance in matches:
                 track = self._tracks[track_id]
                 detection = detections[detection_index]
-                track.filter.update(
-                    detection.position_base_mm,
-                    detection.covariance_base,
-                )
-                track.confidence = min(
-                    1.0,
-                    max(
-                        detection.confidence,
-                        track.confidence * 0.75 + detection.confidence * 0.35,
-                    ),
-                )
-                was_confirmed = track.status in {"confirmed", "lost"}
-                track.last_seen_time = detection.measurement_time
-                track.hits += 1
-                track.consecutive_hits += 1
-                track.misses = 0
-                track.bbox = detection.bbox
-                track.center = detection.center
-                if was_confirmed or track.consecutive_hits >= self.config.confirm_hits:
-                    track.status = "confirmed"
+                self._apply_detection_update(track, detection)
                 assignments.append(
                     {
                         "track_id": track_id,
@@ -252,12 +358,43 @@ class MultiTargetTracker:
                     should_delete = track.misses > self.config.max_misses
 
                 if should_delete:
+                    self._move_to_dormant(track_id, track, timestamp)
                     del self._tracks[track_id]
                     if self.selected_track_id == track_id:
                         self.selected_track_id = None
                         # Expiry is a stop condition, never permission to redirect
                         # actuation to another visible target.
                         self._auto_select_suppressed = True
+
+            available_detection_ids = set(range(len(detections))) - matched_detection_ids
+            dormant_matches, _, _ = self._associate_dormant(
+                detections,
+                available_detection_ids,
+                timestamp,
+            )
+            for track_id, detection_index, distance, score in dormant_matches:
+                track = self._dormant_tracks.pop(track_id)
+                detection = detections[detection_index]
+                track.filter.predict_to(timestamp)
+                restore_selection = (
+                    track.selected_when_dormant
+                    and self.selected_track_id is None
+                )
+                self._apply_detection_update(track, detection)
+                self._tracks[track_id] = track
+                matched_detection_ids.add(detection_index)
+                if restore_selection:
+                    self.selected_track_id = track_id
+                    self._auto_select_suppressed = False
+                assignments.append(
+                    {
+                        "track_id": track_id,
+                        "detection_index": detection_index,
+                        "distance_mm": distance,
+                        "reidentified": True,
+                        "reidentify_score": score,
+                    }
+                )
 
             for detection_index, detection in enumerate(detections):
                 if detection_index not in matched_detection_ids:
@@ -317,6 +454,10 @@ class MultiTargetTracker:
         with self._lock:
             return self._snapshots()
 
+    def managed_track_count(self) -> int:
+        with self._lock:
+            return len(self._tracks) + len(self._dormant_tracks)
+
     def select_target(self, target_id: int) -> bool:
         with self._lock:
             if target_id not in self._tracks:
@@ -333,6 +474,7 @@ class MultiTargetTracker:
     def clear(self) -> None:
         with self._lock:
             self._tracks.clear()
+            self._dormant_tracks.clear()
             self.selected_track_id = None
             self._auto_select_suppressed = False
             self.last_assignments = []

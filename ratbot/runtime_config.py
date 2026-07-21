@@ -66,6 +66,7 @@ class TrackerRuntimeConfig:
     world_confirm_hits: int
     world_max_misses: int
     world_delete_after_seconds: float
+    world_reidentify_after_seconds: float
     world_process_acceleration_std_mm_s2: float
     world_min_depth_confidence: float
     world_aim_latency_seconds: float
@@ -461,6 +462,9 @@ def parse_runtime_config(
         world_confirm_hits=int(world.get("confirm_hits", 3)),
         world_max_misses=int(world.get("max_misses", 5)),
         world_delete_after_seconds=float(world.get("delete_after_seconds", 1.5)),
+        world_reidentify_after_seconds=float(
+            world.get("reidentify_after_seconds", 8.0)
+        ),
         world_process_acceleration_std_mm_s2=float(
             world.get("process_acceleration_std_mm_s2", 300.0)
         ),

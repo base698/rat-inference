@@ -26,6 +26,7 @@ _PARAMETER_DEFAULTS = {
     "confirm_hits": 3,
     "max_misses": 5,
     "delete_after_seconds": 1.5,
+    "reidentify_after_seconds": 8.0,
     "process_acceleration_std_mm_s2": 300.0,
     "confidence_decay": 0.85,
 }
@@ -372,7 +373,12 @@ class TrackRecordingStore:
             "confirm_hits": int(cast(Any, merged["confirm_hits"])),
             "max_misses": int(cast(Any, merged["max_misses"])),
             "delete_after_seconds": float(cast(Any, merged["delete_after_seconds"])),
-            "process_acceleration_std_mm_s2": float(cast(Any, merged["process_acceleration_std_mm_s2"])),
+            "reidentify_after_seconds": float(
+                cast(Any, merged["reidentify_after_seconds"])
+            ),
+            "process_acceleration_std_mm_s2": float(
+                cast(Any, merged["process_acceleration_std_mm_s2"])
+            ),
             "confidence_decay": float(cast(Any, merged["confidence_decay"])),
         }
         bounds = {
@@ -380,6 +386,7 @@ class TrackRecordingStore:
             "confirm_hits": (1, 100),
             "max_misses": (0, 30),
             "delete_after_seconds": (0.001, 10.0),
+            "reidentify_after_seconds": (0.0, 30.0),
             "process_acceleration_std_mm_s2": (0.001, 10_000.0),
             "confidence_decay": (0.001, 1.0),
         }
@@ -446,7 +453,10 @@ class TrackRecordingStore:
                 confirm_hits=int(tuned["confirm_hits"]),
                 max_misses=int(tuned["max_misses"]),
                 delete_after_seconds=float(tuned["delete_after_seconds"]),
-                process_acceleration_std_mm_s2=float(tuned["process_acceleration_std_mm_s2"]),
+                reidentify_after_seconds=float(tuned["reidentify_after_seconds"]),
+                process_acceleration_std_mm_s2=float(
+                    tuned["process_acceleration_std_mm_s2"]
+                ),
                 confidence_decay=float(tuned["confidence_decay"]),
                 auto_select=True,
             ))
@@ -533,8 +543,8 @@ class TrackRecordingStore:
                 if replay_work_units > self.max_replay_work_units:
                     raise ValueError("reprocessed recording exceeds CPU work limit")
                 tracks = tracker.update(detections, timestamp)
-                prior_track_count = len(tracks)
-                if len(tracks) > self.max_replay_tracks:
+                prior_track_count = tracker.managed_track_count()
+                if prior_track_count > self.max_replay_tracks:
                     raise ValueError("reprocessed recording exceeds track-count limit")
                 frame = dict(original)
                 frame["tracks"] = [track.to_dict() for track in tracks]
