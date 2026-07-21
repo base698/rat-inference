@@ -203,7 +203,7 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
 
         self.assertAlmostEqual(belief["pitch"], robot.current_pitch, delta=1)
 
-    def test_fresh_selected_center_is_preferred_for_control_aiming(self):
+    def test_robot_world_aim_ignores_fresh_center_by_default(self):
         robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)
         noisy_position = self.transformer.camera_to_base(
             [0, -300, 1000],
@@ -216,6 +216,28 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
             self.transformer,
             aim_latency_seconds=0.0,
             max_age_seconds=1.0,
+            robot=robot,
+            clock=lambda: 10.1,
+        )
+
+        belief = adapter.get_active()
+
+        self.assertLess(belief["pitch"], robot.current_pitch)
+
+    def test_fresh_selected_center_preference_is_opt_in(self):
+        robot = FakeRobot(yaw=2200, pitch=250, crosshair_y=340)
+        noisy_position = self.transformer.camera_to_base(
+            [0, -300, 1000],
+            robot.current_yaw,
+            robot.current_pitch,
+        )
+        self.add_track(noisy_position, center=(320, 340))
+        adapter = WorldTrackBeliefAdapter(
+            self.manager,
+            self.transformer,
+            aim_latency_seconds=0.0,
+            max_age_seconds=1.0,
+            prefer_fresh_center=True,
             robot=robot,
             clock=lambda: 10.1,
         )
@@ -266,6 +288,32 @@ class WorldTrackBeliefAdapterTests(unittest.TestCase):
         belief = adapter.get_active()
 
         self.assertLess(belief["pitch"], robot.current_pitch)
+
+    def test_robot_world_aim_does_not_lead_with_track_velocity(self):
+        robot = FakeRobot(yaw=2200, pitch=250)
+        position = self.transformer.camera_to_base(
+            [0, 0, 1000],
+            robot.current_yaw,
+            robot.current_pitch,
+        )
+        self.add_track(position)
+        track = self.manager._tracks[self.manager.selected_track_id]
+        track.filter.state[4] = 1000.0
+        adapter = WorldTrackBeliefAdapter(
+            self.manager,
+            self.transformer,
+            aim_latency_seconds=0.5,
+            max_age_seconds=1.0,
+            robot=robot,
+            clock=lambda: 10.1,
+        )
+
+        belief = adapter.get_active()
+
+        self.assertAlmostEqual(belief["yaw"], robot.current_yaw, delta=1)
+        self.assertEqual(belief["yaw_velocity"], 0.0)
+        self.assertEqual(belief["pitch_velocity"], 0.0)
+        self.assertEqual(belief["prediction_dt"], 0.0)
 
 
 if __name__ == "__main__":

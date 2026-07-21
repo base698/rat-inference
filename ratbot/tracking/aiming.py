@@ -18,6 +18,7 @@ class WorldTrackBeliefAdapter:
         min_confidence=0.2,
         max_age_seconds=0.8,
         fresh_center_max_age_seconds=None,
+        prefer_fresh_center=False,
         robot=None,
         clock=time.monotonic,
     ):
@@ -31,6 +32,7 @@ class WorldTrackBeliefAdapter:
             if fresh_center_max_age_seconds is None
             else max(0.0, float(fresh_center_max_age_seconds))
         )
+        self.prefer_fresh_center = bool(prefer_fresh_center)
         self.robot = robot
         self.clock = clock
 
@@ -143,7 +145,8 @@ class WorldTrackBeliefAdapter:
 
     def _aim_for_track(self, track, age):
         if (
-            self.robot is not None
+            self.prefer_fresh_center
+            and self.robot is not None
             and hasattr(self.robot, "pixel_to_target_position")
             and track.center is not None
             and track.misses == 0
@@ -169,10 +172,15 @@ class WorldTrackBeliefAdapter:
 
     def get_active(self):
         now = float(self.clock())
-        track = self.manager.get_selected_track(
-            timestamp=now,
-            prediction_horizon=self.aim_latency_seconds,
-        )
+        if self.robot is None:
+            prediction_horizon = self.aim_latency_seconds
+            track = self.manager.get_selected_track(
+                timestamp=now,
+                prediction_horizon=prediction_horizon,
+            )
+        else:
+            prediction_horizon = 0.0
+            track = self.manager.get_selected_track(prediction_horizon=0.0)
         if track is None:
             return None
         age = max(0.0, now - track.last_seen_time)
@@ -185,11 +193,18 @@ class WorldTrackBeliefAdapter:
 
         try:
             aim = self._aim_for_track(track, age)
-            base_position = track.position - track.velocity * self.aim_latency_seconds
-            base_aim = self._aim_for_position(base_position)
-            velocity_dt = 0.01
-            future_position = track.position + track.velocity * velocity_dt
-            future_aim = self._aim_for_position(future_position)
+            if self.robot is None:
+                base_position = track.position - track.velocity * self.aim_latency_seconds
+                base_aim = self._aim_for_position(base_position)
+                velocity_dt = 0.01
+                future_position = track.position + track.velocity * velocity_dt
+                future_aim = self._aim_for_position(future_position)
+                yaw_velocity = (future_aim["yaw"] - aim["yaw"]) / velocity_dt
+                pitch_velocity = (future_aim["pitch"] - aim["pitch"]) / velocity_dt
+            else:
+                base_aim = aim
+                yaw_velocity = 0.0
+                pitch_velocity = 0.0
         except ValueError:
             return None
         return {
@@ -197,9 +212,9 @@ class WorldTrackBeliefAdapter:
             "pitch": aim["pitch"],
             "base_yaw": base_aim["yaw"],
             "base_pitch": base_aim["pitch"],
-            "yaw_velocity": (future_aim["yaw"] - aim["yaw"]) / velocity_dt,
-            "pitch_velocity": (future_aim["pitch"] - aim["pitch"]) / velocity_dt,
-            "prediction_dt": self.aim_latency_seconds,
+            "yaw_velocity": yaw_velocity,
+            "pitch_velocity": pitch_velocity,
+            "prediction_dt": prediction_horizon,
             "confidence": track.confidence,
             "age": age,
             "track_id": track.id,
