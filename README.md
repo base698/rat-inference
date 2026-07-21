@@ -186,6 +186,28 @@ Jetson: CSI stereo camera input, TensorRT model inference, Feetech servos, and
 angular-belief tracking. Keep world tracking opt-in until its target identity and
 reacquisition behavior are reliable enough for normal use.
 
+### Monitoring
+
+The Ratbot API exposes Prometheus text metrics at `/metrics` on the same FastAPI
+server as the control UI. Useful scrape targets on the Jetson are:
+
+```yaml
+scrape_configs:
+  - job_name: ratbot-api
+    static_configs:
+      - targets: ["jetson.local:8000"]
+
+  - job_name: jetson-node
+    static_configs:
+      - targets: ["jetson.local:9100"]
+```
+
+The API metrics include HTTP request counts/durations, camera and servo
+connection state, detection count/confidence/depth, measured inference/control
+FPS, world-track counts by status, selected track ID, and track-recording state.
+The Jetson node exporter runs separately from the Ratbot container so host CPU,
+memory, disk, network, and process metrics continue through Ratbot app restarts.
+
 The current CSI helper captures the IMX219 cameras at `1640x1232` and scales to
 the app's `640x480` frame. That gives a wider 4:3 field of view than the old
 `1280x720` input mode while keeping the web/video and inference frame size

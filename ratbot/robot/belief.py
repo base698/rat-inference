@@ -304,6 +304,7 @@ class AngularBeliefController:
         self.last_time = time.time()
         self.loop_count = 0
         self.window_start = time.time()
+        self.last_actual_fps = 0.0
 
     @staticmethod
     def _optional_positive_float(value):
@@ -437,6 +438,7 @@ class AngularBeliefController:
             window_elapsed = time.time() - self.window_start
             if window_elapsed >= 5.0:
                 actual_fps = self.loop_count / window_elapsed
+                self.last_actual_fps = actual_fps
                 print(f"Tracking control actual FPS: {actual_fps:.1f} (target {self.control_fps:g})", flush=True)
                 self.loop_count = 0
                 self.window_start = time.time()

@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import time
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -13,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ratbot.robot import TrackerRobot
+from ratbot.web.metrics import PROMETHEUS_CONTENT_TYPE, RatbotMetrics
 
 _MAX_REPLAY_RESPONSE_BYTES = 64 * 1024 * 1024
 _MAX_REQUEST_BODY_BYTES = 64 * 1024
@@ -112,6 +114,7 @@ class TrackerControlApi:
         self._get_target_crosshair_x = get_target_crosshair_x
         self._get_target_crosshair_y = get_target_crosshair_y
         self._tracker: Optional[TrackerRobot] = None
+        self.metrics = RatbotMetrics()
         self.app = FastAPI()
         self.app.add_middleware(RequestBodyLimitMiddleware)
 
@@ -134,10 +137,37 @@ class TrackerControlApi:
         app = self.app
         replay_lock = asyncio.Lock()
 
+        @app.middleware("http")
+        async def collect_http_metrics(request: Request, call_next):
+            self.metrics.begin_http_request()
+            start = time.perf_counter()
+            status_code = 500
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+                return response
+            finally:
+                route = request.scope.get("route")
+                path = getattr(route, "path", request.url.path)
+                self.metrics.finish_http_request(
+                    method=request.method,
+                    path=path,
+                    status_code=status_code,
+                    duration_seconds=time.perf_counter() - start,
+                )
+
         @app.get("/")
         async def root():
             """Root endpoint - serve static HTML file"""
             return FileResponse(Path(self.config.static_dir) / "index.html")
+
+        @app.get("/metrics")
+        async def metrics():
+            """Prometheus scrape endpoint for API and robot state."""
+            return Response(
+                self.metrics.render(self.tracker),
+                media_type=PROMETHEUS_CONTENT_TYPE,
+            )
 
         @app.get("/config")
         async def get_config():

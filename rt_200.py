@@ -493,6 +493,7 @@ class CameraTracker:
         self.inference_lock = threading.Lock()
         self.inference_loop_count = 0
         self.inference_fps_window_start = time.time()
+        self.last_inference_fps = 0.0
 
         tracking_config = CONFIG.get('tracking', {}) if CONFIG else {}
         self.stereo_depth = StereoDepthService(
@@ -1331,6 +1332,7 @@ class CameraTracker:
             return {
                 "detection": self.latest_detection,
                 "confidence": self.latest_confidence if hasattr(self, 'latest_confidence') else 0,
+                "depth_mm": self.latest_depth,
                 "recent_detections": self.recent_detections,
                 "world_tracking": self.world_tracking,
                 "world_actuation_enabled": self.world_actuation_enabled,
@@ -1356,6 +1358,7 @@ class CameraTracker:
             window_elapsed = time.time() - self.inference_fps_window_start
             if window_elapsed >= 5.0:
                 actual_fps = self.inference_loop_count / window_elapsed
+                self.last_inference_fps = actual_fps
                 print(f"Inference actual FPS: {actual_fps:.1f} (target {self.inference_fps:g})", flush=True)
                 self.inference_loop_count = 0
                 self.inference_fps_window_start = time.time()

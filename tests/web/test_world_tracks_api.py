@@ -27,6 +27,8 @@ class FakeTracker:
     world_tracking = True
     world_api_selection_enabled = True
     world_api_recording_enabled = True
+    world_actuation_enabled = True
+    world_calibration_validated = True
 
     def __init__(self):
         self.selected = None
@@ -34,7 +36,16 @@ class FakeTracker:
         self.recordings = [{"id": "20260721T120000-test", "frame_count": 4}]
 
     def get_world_tracks(self):
-        return [{"id": 7, "selected": self.selected == 7}]
+        return [{"id": 7, "selected": self.selected == 7, "status": "confirmed"}]
+
+    def get_detection_data(self):
+        return {
+            "detection": True,
+            "confidence": 0.42,
+            "depth_mm": 1500.0,
+            "selected_track_id": self.selected,
+            "tracks": self.get_world_tracks(),
+        }
 
     def select_world_target(self, target_id):
         if target_id != 7:
@@ -141,6 +152,25 @@ class WorldTrackApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'"world_tracking":true', response.body)
         self.assertIn(b'"id":7', response.body)
+
+    def test_metrics_endpoint_exposes_prometheus_text(self):
+        self.api.metrics.finish_http_request(
+            method="GET",
+            path="/status",
+            status_code=200,
+            duration_seconds=0.25,
+        )
+
+        response = asyncio.run(self.endpoint("/metrics", "GET")())
+        body = response.body.decode("utf-8")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("# TYPE ratbot_up gauge", body)
+        self.assertIn("ratbot_http_requests_total{method=\"GET\",path=\"/status\",status=\"200\"} 1", body)
+        self.assertIn("ratbot_detection_active 1", body)
+        self.assertIn("ratbot_latest_depth_meters 1.5", body)
+        self.assertIn("ratbot_world_actuation_enabled 1", body)
+        self.assertIn("ratbot_world_tracks_by_status{status=\"confirmed\"} 1", body)
 
     def test_tracks_page_is_served_separately_from_live_json(self):
         (Path(self.temp.name) / "tracks.html").write_text("<h1>Track Replay</h1>")
