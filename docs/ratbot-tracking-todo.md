@@ -5,7 +5,7 @@
 Test command:
 
 ```bash
-./run.sh rt200 --model yolo11n.pt --target-class bottle --target-class cup --confidence 0.35
+./run.sh rt200 --model yolo11n.pt --target-class bottle --target-class cup --confidence 0.35 --device 0
 ```
 
 Current tuning state:

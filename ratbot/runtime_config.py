@@ -23,6 +23,7 @@ class TrackerRuntimeConfig:
     requested_model: str
     disable_detection: bool
     confidence_threshold: float
+    inference_device: str | None
     camera_id: int
     use_csi: bool
     invert_camera: bool
@@ -134,6 +135,16 @@ def _triple(value, default=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
     return (float(value[0]), float(value[1]), float(value[2]))
 
 
+def _normalize_inference_device(value: Any) -> str | None:
+    """Normalize configured YOLO device strings for Ultralytics."""
+    if value is None:
+        return None
+    device = str(value).strip()
+    if not device or device.lower() in {"auto", "none", "default"}:
+        return None
+    return device
+
+
 def build_argument_parser(
     raw_config: Mapping[str, Any] | None,
     *,
@@ -156,6 +167,7 @@ def build_argument_parser(
         "model": "Path to YOLO model",
         "disable_detection": "Disable YOLO detection while keeping the camera stream enabled",
         "confidence": "Detection confidence threshold",
+        "device": "YOLO inference device: 0/cuda:0 for CUDA, cpu for CPU, auto for Ultralytics default",
         "target_class": "YOLO class name to track. Repeat or comma-separate values. Default: all model classes",
         "imgsz": "Inference image size in pixels (default: 640)",
         "inference_fps": f"Target inference loop FPS (default: {inference_fps_default:g})",
@@ -214,6 +226,11 @@ def build_argument_parser(
         "-c",
         type=float,
         default=float(detection.get("confidence_threshold", 0.75)),
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=detection.get("device", "0"),
     )
     parser.add_argument("--target-class", action="append", default=None)
     parser.add_argument(
@@ -417,6 +434,7 @@ def parse_runtime_config(
         requested_model=args.model,
         disable_detection=args.disable_detection,
         confidence_threshold=args.confidence,
+        inference_device=_normalize_inference_device(args.device),
         camera_id=args.camera_id,
         use_csi=args.use_csi,
         invert_camera=args.invert_camera,

@@ -18,6 +18,7 @@ RAW_CONFIG = {
         "model_path": "configured.engine",
         "confidence_threshold": 0.7,
         "imgsz": 640,
+        "device": "0",
         "target_classes": ["item", "class0"],
     },
     "tracking": {
@@ -61,6 +62,7 @@ EXPECTED_HELP = {
     "model": "Path to YOLO model",
     "disable_detection": "Disable YOLO detection while keeping the camera stream enabled",
     "confidence": "Detection confidence threshold",
+    "device": "YOLO inference device: 0/cuda:0 for CUDA, cpu for CPU, auto for Ultralytics default",
     "target_class": "YOLO class name to track. Repeat or comma-separate values. Default: all model classes",
     "imgsz": "Inference image size in pixels (default: 640)",
     "inference_fps": "Target inference loop FPS (default: 20)",
@@ -118,6 +120,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(tracker.model_path, None)
         self.assertEqual(tracker.requested_model, "configured.engine")
         self.assertEqual(tracker.confidence_threshold, 0.7)
+        self.assertEqual(tracker.inference_device, "0")
         self.assertEqual(tracker.camera_width, 960)
         self.assertEqual(tracker.camera_height, 720)
         self.assertEqual(tracker.camera_fov_horizontal, 60.0)
@@ -156,6 +159,7 @@ class RuntimeConfigTests(unittest.TestCase):
             "--target-class", "rat,mouse",
             "--target-class", "item",
             "--confidence", "0.8",
+            "--device", "cpu",
             "--api-port", "9000",
         ])
         tracker = runtime.tracker
@@ -163,7 +167,13 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(tracker.model_path, "override.pt")
         self.assertEqual(tracker.target_classes, ("rat,mouse", "item"))
         self.assertEqual(tracker.confidence_threshold, 0.8)
+        self.assertEqual(tracker.inference_device, "cpu")
         self.assertEqual(runtime.api_port, 9000)
+
+    def test_auto_inference_device_omits_ultralytics_override(self):
+        runtime = self.parse(["--device", "auto"])
+
+        self.assertIsNone(runtime.tracker.inference_device)
 
     def test_stereo_uses_existing_default_calibration_when_available(self):
         expected = "tools/vision/calibration/output_recal/stereo_calibration.npz"

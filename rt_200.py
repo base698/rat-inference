@@ -312,6 +312,7 @@ class CameraTracker:
                  use_csi=False, invert_camera=False, camera_width=640,
                  camera_height=480, camera_fov_horizontal=60.0,
                  camera_fov_vertical=45.0, imgsz=640,
+                 inference_device=None,
                  inference_fps=None, target_classes=None, calibration_file=None,
                  stereo_mode=False, baseline_override=None,
                  tracking_smoothing=0.45, max_yaw_step=45, max_pitch_step=45,
@@ -358,6 +359,7 @@ class CameraTracker:
             enable_trigger: Enable GPIO trigger servo
             model_path: Path to YOLO model
             confidence_threshold: Detection confidence threshold
+            inference_device: YOLO device passed to Ultralytics ('0', 'cuda:0', 'cpu', or None for auto)
             camera_id: Camera device ID (0 for USB, varies for CSI)
             use_csi: Use CSI camera with GStreamer pipeline (Jetson)
             invert_camera: Invert camera 180 degrees for upside-down mounting (default: False)
@@ -419,6 +421,9 @@ class CameraTracker:
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.imgsz = imgsz
+        self.inference_device = inference_device
+        self.inference_runtime_device = None
+        self._runtime_device_logged = False
         self.inference_fps = max(1.0, float(inference_fps or INFERENCE_FPS))
         self.target_classes = self._normalize_target_classes(target_classes)
         self.max_yaw_step = max(0, int(max_yaw_step))
@@ -862,6 +867,7 @@ class CameraTracker:
         try:
             self.model = YOLO(self.model_path)
             print(f"✓ YOLO model loaded: {self.model_path}")
+            print(f"  YOLO inference device request: {self.inference_device or 'auto'}")
         except Exception as e:
             print(f"Failed to load model: {e}")
             self.model = None
@@ -1297,8 +1303,19 @@ class CameraTracker:
                 frame,
                 conf=self.confidence_threshold,
                 imgsz=self.imgsz,
+                device=self.inference_device,
                 verbose=False
             )
+            if not self._runtime_device_logged:
+                runtime_device = getattr(self.model, "device", None)
+                self.inference_runtime_device = (
+                    None if runtime_device is None else str(runtime_device)
+                )
+                print(
+                    f"YOLO runtime device: {self.inference_runtime_device or 'unknown'}",
+                    flush=True,
+                )
+                self._runtime_device_logged = True
 
             # Extract detections using shared utility and keep configured target classes.
             if self.target_classes:
@@ -1426,6 +1443,8 @@ class CameraTracker:
                 "detection": self.latest_detection,
                 "confidence": self.latest_confidence if hasattr(self, 'latest_confidence') else 0,
                 "depth_mm": self.latest_depth,
+                "inference_device": self.inference_device or "auto",
+                "inference_runtime_device": self.inference_runtime_device,
                 "recent_detections": self.recent_detections,
                 "world_tracking": self.world_tracking,
                 "world_actuation_enabled": self.world_actuation_enabled,
@@ -1521,6 +1540,7 @@ def main():
         print(f"Target classes: {target_classes}")
         print(f"Confidence threshold: {settings.confidence_threshold}")
         print(f"Inference image size: {settings.imgsz}px")
+        print(f"Inference device: {settings.inference_device or 'auto'}")
         print(f"Inference FPS target: {tracker.inference_fps:g}")
         print(f"Tracking control FPS target: {tracker.tracking_control_fps:g}")
         print(f"Angular belief: alpha={tracker.belief_update_alpha:g}, pitch_alpha={tracker.belief_pitch_update_alpha:g}, miss_decay={tracker.belief_miss_decay:g}, min_conf={tracker.belief_min_confidence:g}, max_age={tracker.belief_max_age:g}s, reseed={tracker.belief_reseed_distance_raw:g} raw x{tracker.belief_reseed_confirmations} @ conf>={tracker.belief_reseed_min_confidence:g}")

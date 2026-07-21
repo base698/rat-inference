@@ -102,18 +102,19 @@ Run inference on images or videos:
 
 ```bash
 # Single image with default size (640)
-uv run python tools/vision/inference/inference.py --input image.jpg --model runs/best.pt --show
+uv run python tools/vision/inference/inference.py --input image.jpg --model runs/best.pt --device 0 --show
 
 # Video with larger inference size (1024)
-uv run python tools/vision/inference/inference.py --input video.mp4 --model runs/best.pt --imgsz 1024 --save
+uv run python tools/vision/inference/inference.py --input video.mp4 --model runs/best.pt --device 0 --imgsz 1024 --save
 
 # Custom confidence threshold
-uv run python tools/vision/inference/inference.py --input image.jpg --model runs/best.pt --conf 0.5 --imgsz 640
+uv run python tools/vision/inference/inference.py --input image.jpg --model runs/best.pt --device 0 --conf 0.5 --imgsz 640
 ```
 
 **Parameters:**
 - `--imgsz`: Inference image size in pixels (default: 640)
 - `--conf`: Confidence threshold (default: 0.25)
+- `--device`: YOLO device (`0`/`cuda:0` for CUDA, `cpu` for CPU)
 - `--show`: Display results
 - `--save`: Save annotated output
 
@@ -148,6 +149,7 @@ uv run --extra jetson python rt_200.py \
   --calibration tools/vision/calibration/output_recal/stereo_calibration.npz \
   --baseline-override 51.1 \
   --port /dev/ttyACM0 \
+  --device 0 \
   --imgsz 1024 \
   --inference-fps 4
 
@@ -169,6 +171,7 @@ uv run --extra jetson python rt_200.py \
   --port /dev/ttyACM0 \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.70 \
+  --device 0 \
   --inference-fps 20 \
   --tracking-control-fps 60 \
   --belief-update-alpha 0.75 \
@@ -185,6 +188,18 @@ The same default path is what `./run.sh rt200` is intended to start on the
 Jetson: CSI stereo camera input, TensorRT model inference, Feetech servos, and
 angular-belief tracking. Keep world tracking opt-in until its target identity and
 reacquisition behavior are reliable enough for normal use.
+
+For raw COCO object tests such as a can, bottle, or cup, keep the same CUDA
+device setting and override only the model/target classes:
+
+```bash
+./run.sh rt200 \
+  --model yolo11n.pt \
+  --target-class bottle \
+  --target-class cup \
+  --confidence 0.30 \
+  --device 0
+```
 
 ### Monitoring
 
@@ -659,12 +674,12 @@ python tools/vision/training/train.py --imgsz 640   # Default
 python tools/vision/training/train.py --imgsz 1024  # Higher accuracy (requires retraining)
 
 # Inference
-python tools/vision/inference/inference.py --imgsz 640   # Default
-python tools/vision/inference/inference.py --imgsz 1024  # Larger inference size
+python tools/vision/inference/inference.py --device 0 --imgsz 640   # Default CUDA inference
+python tools/vision/inference/inference.py --device 0 --imgsz 1024  # Larger inference size
 
 # Real-time tracking
-python rt_200.py --imgsz 640 --inference-fps 20   # Current real-time tracking target
-python rt_200.py --imgsz 1024  # Higher accuracy, ~2-4 FPS on Jetson
+python rt_200.py --device 0 --imgsz 640 --inference-fps 20   # Current real-time tracking target
+python rt_200.py --device 0 --imgsz 1024  # Higher accuracy, ~2-4 FPS on Jetson
 ```
 
 **Notes:**
@@ -719,6 +734,7 @@ uv run python rt_200.py \
   --baseline-override 51.1 \
   --model runs/yolo11n-2025-10-23/weights/best.engine \
   --confidence 0.70 \
+  --device 0 \
   --imgsz 640 \
   --inference-fps 20
 

@@ -177,6 +177,16 @@ class RatbotMetrics:
 
         self._help(lines, "ratbot_inference_fps", "gauge", "Most recent measured inference loop FPS.")
         self._sample(lines, "ratbot_inference_fps", getattr(tracker, "last_inference_fps", None))
+        inference_device = getattr(tracker, "inference_device", None) or "auto"
+        runtime_device = getattr(tracker, "inference_runtime_device", None) or "unknown"
+        self._help(lines, "ratbot_inference_device_info", "gauge", "Configured and reported YOLO inference device.")
+        self._sample(
+            lines,
+            "ratbot_inference_device_info",
+            1,
+            configured=inference_device,
+            runtime=runtime_device,
+        )
         controller = getattr(tracker, "tracking_controller", None)
         self._help(lines, "ratbot_tracking_control_fps", "gauge", "Most recent measured tracking control loop FPS.")
         self._sample(lines, "ratbot_tracking_control_fps", getattr(controller, "last_actual_fps", None))

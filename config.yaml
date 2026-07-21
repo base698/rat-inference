@@ -180,6 +180,7 @@ pid:
 detection:
   confidence_threshold: 0.70
   imgsz: 640
+  device: "0"       # YOLO inference device: "0"/"cuda:0" for CUDA, "cpu" for CPU, "auto" for Ultralytics default
   model_path: "runs/yolo11n-2025-10-23/weights/best.engine"
   target_classes:
     - item
