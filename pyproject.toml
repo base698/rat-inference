@@ -31,6 +31,16 @@ dataset = [
     "google-cloud-aiplatform>=1.122.0",
 ]
 
+# For RealSense D435 (tools/vision/realsense_explorer.py, realsense_web.py).
+# macOS only. Intel does publish aarch64 wheels, but for cp39/310/312 and not
+# cp311, which is what this project pins — so on the Jetson the RealSense tools
+# run under the system python3.10 instead of this venv:
+#   python3 -m pip install --user pyrealsense2
+#   python3 tools/vision/realsense_web.py
+realsense = [
+    "pyrealsense2-macosx>=2.56.5; sys_platform == 'darwin'",
+]
+
 # For model optimization and export
 optimize = [
     "ncnn>=1.0.20250916",

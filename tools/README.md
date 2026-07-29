@@ -23,3 +23,29 @@ Use these canonical paths for utility commands. Root-level compatibility wrapper
 - `tools/vision/dataset/extract-frames.sh`: extract frames for dataset building.
 - `tools/vision/training/train.py`: train a YOLO model.
 - `tools/vision/inference/inference.py`: run image or video inference.
+
+## RealSense D435
+
+Two views of the same explorer — device introspection, color/depth/IR streaming,
+depth-to-color alignment, post-processing filters, IR emitter and visual preset
+control, depth probing, and point cloud export.
+
+- `tools/vision/realsense_explorer.py`: desktop OpenCV window. macOS needs root
+  to claim the USB device: `sudo .venv/bin/python tools/vision/realsense_explorer.py`.
+- `tools/vision/realsense_web.py`: same thing served over HTTP, for the headless
+  Jetson. Defaults to port 8090, leaving 8000 free for `rt_200.py`.
+
+On the Jetson these run under the system `python3` (3.10), not the project venv:
+Intel ships aarch64 `pyrealsense2` wheels for cp39/310/312 but not cp311.
+
+```bash
+python3 -m pip install --user pyrealsense2      # one time
+cd ~/rat-inference
+setsid python3 -u tools/vision/realsense_web.py --port 8090 \
+  </dev/null >run_logs/realsense_web.log 2>&1 &
+```
+
+Then open `http://<jetson-ip>:8090/`. Add `--info` to dump device capabilities
+and factory calibration as JSON without starting the server. To stop it, use
+`pkill -f "[r]ealsense_web.py"` — the bracket keeps the pattern from matching
+the shell running your own command.
