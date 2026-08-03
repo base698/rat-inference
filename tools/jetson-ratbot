@@ -1,0 +1,96 @@
+#!/bin/bash
+# ratbot — start/stop the rat-inference bot in DEMO mode: stock COCO yolo11n.pt
+# tracking cans/cups (--target-class bottle/cup) at the 960x720 stereo config,
+# world tracking enabled, trigger servo DISABLED (no --enable-trigger).
+# See handoff: Ratbot 960 camera + belief-controller test notes (2026-07-21).
+#
+# Autostart: the container runs with --restart unless-stopped, so Docker
+# brings it back up on boot — unless you stopped it with "ratbot stop",
+# in which case it stays off until "ratbot start".
+#
+# Usage: ratbot {start|stop|restart|reload|status|logs}
+#   start    create or resume the demo container
+#   stop     stop it (stays off, survives reboot)
+#   restart  quick stop/start of the same container
+#   reload   recreate the container (picks up new image/flags)
+#   status   container state + web UI check
+#   logs     follow container logs (ctrl-c to detach)
+
+set -euo pipefail
+NAME=ratbot-demo
+DIR=/home/base698/rat-inference
+IMAGE=rat-inference:latest
+
+run_container() {
+  mkdir -p "$DIR"/detections "$DIR"/runs "$DIR"/run_logs
+  docker run -d \
+    --name "$NAME" \
+    --restart unless-stopped \
+    --privileged \
+    --ipc=host \
+    --runtime=nvidia \
+    --network=host \
+    --pid=host \
+    -v /tmp:/tmp \
+    -v /var/run:/var/run \
+    -v "$DIR"/detections:/app/detections \
+    -v "$DIR"/runs:/app/runs \
+    -v "$DIR"/run_logs:/app/run_logs \
+    -v "$DIR"/config.yaml:/app/config.yaml:ro \
+    --device=/dev/ttyACM0:/dev/ttyACM0 \
+    --group-add video \
+    "$IMAGE" \
+    python3 rt_200.py \
+      --enable-camera \
+      --port /dev/ttyACM0 \
+      --model runs/redbull/weights/best.pt \
+      --use-csi \
+      --camera-id 0 \
+      --stereo \
+      --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+      --baseline-override 52.5 \
+      --target-class item \
+      --confidence 0.45 \
+      --device 0 \
+      --inference-fps 20
+}
+
+case "${1:-status}" in
+  start)
+    if docker ps -q -f name="^${NAME}$" | grep -q .; then
+      echo "already running"
+    elif docker ps -aq -f name="^${NAME}$" | grep -q .; then
+      docker start "$NAME" >/dev/null && echo "started (existing container)"
+    else
+      run_container >/dev/null && echo "started (new container)"
+    fi
+    echo "web UI: http://jetson:8000"
+    ;;
+  stop)
+    docker stop "$NAME" >/dev/null && echo "stopped (will NOT autostart until: ratbot start)"
+    ;;
+  restart)
+    docker restart "$NAME" >/dev/null && echo "restarted"
+    ;;
+  reload)
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    run_container >/dev/null && echo "reloaded (fresh container)"
+    ;;
+  status)
+    if docker ps -q -f name="^${NAME}$" | grep -q .; then
+      docker ps -f name="^${NAME}$" --format "running: {{.Status}}"
+      curl -s -o /dev/null -w "web UI (:8000): HTTP %{http_code}\n" --max-time 3 http://localhost:8000/ || true
+    elif docker ps -aq -f name="^${NAME}$" | grep -q .; then
+      docker ps -a -f name="^${NAME}$" --format "stopped: {{.Status}}"
+    else
+      echo "not created (run: ratbot start)"
+    fi
+    ;;
+  logs)
+    docker logs -f --tail 100 "$NAME"
+    ;;
+  *)
+    grep "^# Usage" -A 7 "$0" | sed "s/^# \?//"
+    exit 1
+    ;;
+esac

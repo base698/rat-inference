@@ -93,8 +93,8 @@ tracking:
   # max_*_step caps per-control-tick servo jumps in raw units to reduce jerky motion.
   auto_tracking:
     smoothing_alpha: 0.45
-    max_yaw_step: 35
-    max_pitch_step: 22
+    max_yaw_step: 60
+    max_pitch_step: 32
     control_fps: 20
     belief_update_alpha: 0.75
     belief_pitch_update_alpha: 0.35
@@ -104,9 +104,9 @@ tracking:
     belief_deadband_raw: 4
     belief_min_step_raw: 3
     pitch_tracking_scale: 1.6
-    belief_reseed_distance_raw: 160
+    belief_reseed_distance_raw: 420
     belief_reseed_confirmations: 2
-    belief_reseed_match_distance_raw: 120
+    belief_reseed_match_distance_raw: 300
     belief_reseed_max_interval: 0.8
     belief_velocity_alpha: 0.45
     belief_pitch_velocity_alpha: 0.25
