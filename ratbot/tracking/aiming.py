@@ -192,8 +192,13 @@ class WorldTrackBeliefAdapter:
                 prediction_horizon=prediction_horizon,
             )
         else:
-            prediction_horizon = 0.0
-            track = self.manager.get_selected_track(prediction_horizon=0.0)
+            # Extrapolate the track to "now + aim latency" so the PID chases
+            # where the target IS, not where it was one pipeline-latency ago.
+            prediction_horizon = self.aim_latency_seconds
+            track = self.manager.get_selected_track(
+                timestamp=now,
+                prediction_horizon=prediction_horizon,
+            )
         if track is None:
             return None
         age = max(0.0, now - track.last_seen_time)

@@ -1074,7 +1074,7 @@
             refreshWorldTrackCache(status);
             const yawDegrees = servoYawDegrees(status.yaw_position);
             const pitchDegrees = servoPitchDegrees(status.pitch_position);
-            worldViz.yawGroup.rotation.y = yawDegrees * Math.PI / 180;
+            worldViz.yawGroup.rotation.y = -yawDegrees * Math.PI / 180;
             worldViz.pitchGroup.rotation.x = pitchDegrees * Math.PI / 180;
             document.getElementById('worldViewStatus').textContent =
                 `Yaw ${status.yaw_position ?? '--'} Pitch ${status.pitch_position ?? '--'} Tracks ${status.tracks?.length || 0}`;
@@ -1137,7 +1137,7 @@
             const scene = new THREE.Scene();
             scene.background = new THREE.Color(0x0b0f14);
             const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
-            camera.position.set(90, 360, 900);
+            camera.position.set(70, 280, 700);
             camera.lookAt(0, 30, -260);
 
             let renderer;
