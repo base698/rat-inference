@@ -46,4 +46,10 @@ uv run --no-sync python tools/vision/training/train.py \
 scp runs/train/*/weights/best.pt base698@jetson:~/rat-inference/runs/redbull/weights/best.pt
 ```
 Then point `~/bin/ratbot` at it: `--model runs/redbull/weights/best.pt
---target-class redbull` (drop the bottle/cup lines), and `ratbot reload`.
+--target-class item` (drop the bottle/cup lines), and `ratbot reload`.
+
+**Gotcha:** `train.py` trains single-class, and Ultralytics renames the class
+to the generic `item` — NOT the name in the dataset yaml. Filter on
+`--target-class item` (same reason the old rat engine's classes list had
+`item`/`class0`). If the filter name doesn't match `model.names`, detections
+are silently discarded and the turret never locks on.
