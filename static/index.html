@@ -1136,8 +1136,8 @@
             const scene = new THREE.Scene();
             scene.background = new THREE.Color(0x0b0f14);
             const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
-            camera.position.set(0, 230, 560);
-            camera.lookAt(0, 20, -160);
+            camera.position.set(70, 300, 760);
+            camera.lookAt(0, 20, -200);
 
             let renderer;
             try {
@@ -1166,7 +1166,7 @@
             const turret = new THREE.Group();
             const base = new THREE.Mesh(
                 new THREE.CylinderGeometry(38, 44, 28, 32),
-                new THREE.MeshStandardMaterial({color: 0x8fb3ff, roughness: 0.6})
+                new THREE.MeshStandardMaterial({color: 0x8fb3ff, roughness: 0.6, transparent: true, opacity: 0.35, depthWrite: false})
             );
             base.position.y = 14;
             turret.add(base);
@@ -1175,7 +1175,7 @@
             yawGroup.position.y = 32;
             const head = new THREE.Mesh(
                 new THREE.BoxGeometry(58, 38, 48),
-                new THREE.MeshStandardMaterial({color: 0xdbeafe, roughness: 0.45})
+                new THREE.MeshStandardMaterial({color: 0xdbeafe, roughness: 0.45, transparent: true, opacity: 0.35, depthWrite: false})
             );
             head.position.y = 18;
             yawGroup.add(head);
@@ -1185,7 +1185,7 @@
             const barrelLength = 37;
             const barrel = new THREE.Mesh(
                 new THREE.CylinderGeometry(8, 11, barrelLength, 24),
-                new THREE.MeshStandardMaterial({color: 0x22c55e, roughness: 0.35})
+                new THREE.MeshStandardMaterial({color: 0x22c55e, roughness: 0.35, transparent: true, opacity: 0.55, depthWrite: false})
             );
             barrel.rotation.x = Math.PI / 2;
             barrel.position.z = -22;

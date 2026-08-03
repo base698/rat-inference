@@ -37,6 +37,7 @@ run_container() {
     -v "$DIR"/runs:/app/runs \
     -v "$DIR"/run_logs:/app/run_logs \
     -v "$DIR"/config.yaml:/app/config.yaml:ro \
+    -v "$DIR"/static:/app/static:ro \
     --device=/dev/ttyACM0:/dev/ttyACM0 \
     --group-add video \
     "$IMAGE" \
