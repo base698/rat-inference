@@ -162,12 +162,12 @@ pid:
   yaw:
     kp: 0.40   # Proportional gain
     ki: 0.00   # Integral gain
-    kd: 0.12   # Derivative gain (damps overshoot from aim-latency lead)
+    kd: 0.00   # Derivative gain (kd chatters against commanded-vs-physical error flips)
 
   pitch:
     kp: 0.38   # Proportional gain
     ki: 0.00   # Integral gain
-    kd: 0.10   # Derivative gain (damps overshoot from aim-latency lead)
+    kd: 0.00   # Derivative gain (kd chatters against commanded-vs-physical error flips)
 
   max_integral: 10.0   # Anti-windup limit in degrees
 
