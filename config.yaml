@@ -129,7 +129,7 @@ tracking:
     reidentify_after_seconds: 8.0
     process_acceleration_std_mm_s2: 300.0
     min_depth_confidence: 0.20
-    aim_latency_seconds: 0.05
+    aim_latency_seconds: 0.0
     yaw_center_raw: 2200.0
     pitch_center_raw: 250.0
     yaw_raw_per_degree: 8.333333
@@ -160,12 +160,12 @@ camera:
 # PID Controller Gains
 pid:
   yaw:
-    kp: 0.50   # Proportional gain
+    kp: 0.40   # Proportional gain
     ki: 0.00   # Integral gain
-    kd: 0.06   # Derivative gain (damps overshoot from aim-latency lead)
+    kd: 0.12   # Derivative gain (damps overshoot from aim-latency lead)
 
   pitch:
-    kp: 0.45   # Proportional gain
+    kp: 0.38   # Proportional gain
     ki: 0.00   # Integral gain
     kd: 0.10   # Derivative gain (damps overshoot from aim-latency lead)
 
