@@ -44,7 +44,7 @@ run_container() {
     python3 rt_200.py \
       --enable-camera \
       --port /dev/ttyACM0 \
-      --model runs/redbull/weights/best.pt \
+      --model runs/redbull/weights/best.engine \
       --use-csi \
       --camera-id 0 \
       --stereo \
