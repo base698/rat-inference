@@ -93,8 +93,8 @@ tracking:
   # max_*_step caps per-control-tick servo jumps in raw units to reduce jerky motion.
   auto_tracking:
     smoothing_alpha: 0.45
-    max_yaw_step: 25
-    max_pitch_step: 15
+    max_yaw_step: 62
+    max_pitch_step: 38
     control_fps: 20
     belief_update_alpha: 0.75
     belief_pitch_update_alpha: 0.35
