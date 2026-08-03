@@ -1,0 +1,7 @@
+# redbull_dataset.yaml - YOLO dataset for Red Bull can demo (960 rig config)
+path: datasets/redbull
+train: images/train
+val: images/val
+nc: 1
+names:
+  0: redbull

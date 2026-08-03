@@ -235,6 +235,17 @@ class TrackerControlApi:
 
             return JSONResponse(status_data)
 
+        @app.get("/raw-frame")
+        async def raw_frame():
+            """Latest camera frame WITHOUT overlays (for dataset capture)"""
+            tracker = self.tracker
+            if not tracker or not tracker.camera_active:
+                return Response(content=b"", media_type="image/jpeg")
+            frame_bytes = getattr(tracker, "get_latest_raw_frame_bytes", lambda: None)()
+            if frame_bytes is None:
+                return Response(content=b"", media_type="image/jpeg")
+            return Response(content=frame_bytes, media_type="image/jpeg")
+
         @app.get("/stream-frame")
         async def stream_frame():
             """Get the latest camera frame as bytes"""

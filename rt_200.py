@@ -489,6 +489,7 @@ class CameraTracker:
         self.latest_track_assignments = []
         self.detection_count = 0
         self.latest_frame = None
+        self.latest_raw_frame = None
         self.latest_detection = False
         self.latest_bbox = None  # Store latest bounding box (x1, y1, x2, y2)
         self.latest_center_point = None  # Store latest center point (x, y)
@@ -1259,6 +1260,10 @@ class CameraTracker:
             if self.stereo_depth.calibration_enabled and not self.stereo_depth.stereo_calibration_enabled:
                 frame = self.stereo_depth.undistort_frame(frame, use_left=True)
 
+            # Keep a clean copy for dataset capture (no overlays)
+            ret_raw, raw_buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            raw_bytes = raw_buffer.tobytes() if ret_raw else None
+
             # Draw overlays (pass right frame for depth calculation)
             frame = self.draw_overlays(frame, frame_right)
 
@@ -1273,6 +1278,8 @@ class CameraTracker:
             # Update latest frame
             with self.frame_lock:
                 self.latest_frame = img_bytes
+                if raw_bytes is not None:
+                    self.latest_raw_frame = raw_bytes
 
         except Exception as e:
             print(f"Video frame capture error: {e}")
@@ -1448,6 +1455,11 @@ class CameraTracker:
         """Get the latest frame as bytes"""
         with self.frame_lock:
             return self.latest_frame
+
+    def get_latest_raw_frame_bytes(self):
+        """Get the latest camera frame without overlays as bytes"""
+        with self.frame_lock:
+            return self.latest_raw_frame
 
     def get_detection_data(self):
         """Get the latest detection data without image"""

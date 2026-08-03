@@ -552,6 +552,39 @@ Deferred deliberately:
 - Global/world mapping while the robot base moves. That requires base odometry
   or SLAM and a new transform layer.
 
+## Demo Ops & Red Bull Dataset Tools
+
+Tools added for the stage-demo ("track a Red Bull can") pipeline. Full
+step-by-step workflow: `datasets/redbull/README.md`.
+
+**On the Jetson:**
+
+- `~/bin/ratbot {start|stop|restart|reload|status|logs}` — runs the demo
+  container `ratbot-demo` (`--restart unless-stopped`, so it auto-starts on
+  boot unless explicitly stopped). Demo config: stock/custom model, target
+  class filter, 960x720 CSI stereo, trigger disabled.
+- `tools/vision/dataset/collect_server.py` — dataset capture page on
+  http://jetson:8010. Live camera view via the `/raw-frame` endpoint
+  (clean frames, no crosshair overlay — added to `rt_200.py` +
+  `ratbot/web/control_api.py` for exactly this) with single + burst capture
+  into `datasets/redbull/raw/`. Auto-started at boot via user crontab.
+
+**On the workstation:**
+
+- `tools/vision/dataset/sync_captures.sh` — rsync captures from the Jetson
+  and auto-label them.
+- `tools/vision/dataset/autolabel_redbull.py` — YOLO-World open-vocabulary
+  auto-labeler (proposes one box per image; needs `clip-anytorch` and
+  `setuptools<81` in the venv, run via `uv run --no-sync`).
+- `tools/vision/dataset/review_server.py` — yes/no label review UI on
+  http://localhost:8020; accepts move image+label into the train/val split.
+- `tools/vision/dataset/augment_backgrounds.py` — "nano banana"
+  (Vertex gemini-2.5-flash-image) background swaps; `--set venue` for
+  library/stage/office prompts, `--ref-image` to composite into a photo of
+  the actual venue. Re-label + re-review the output.
+- `tools/vision/dataset/audit_sheets.py` — contact sheets of the accepted
+  dataset with boxes drawn, for eyeballing labels before training.
+
 ## Project Structure
 
 ```
