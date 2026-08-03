@@ -976,13 +976,14 @@
         }
 
         function baseToScene(positionMm) {
-            const scale = 0.12;
+            const scale = 0.25;          // world mm -> scene units (bigger = more turret/can separation)
+            const verticalEmphasis = 1.6; // extra lift so frame-edge cans read clearly above/below
             const forwardMm = Number(positionMm?.[0] || 0);
             const leftMm = Number(positionMm?.[1] || 0);
             const upMm = Number(positionMm?.[2] || 0);
             return {
                 x: -leftMm * scale,
-                y: upMm * scale + 30,
+                y: upMm * scale * verticalEmphasis + 30,
                 z: -forwardMm * scale
             };
         }
@@ -1136,8 +1137,8 @@
             const scene = new THREE.Scene();
             scene.background = new THREE.Color(0x0b0f14);
             const camera = new THREE.PerspectiveCamera(45, 1, 1, 5000);
-            camera.position.set(70, 300, 760);
-            camera.lookAt(0, 20, -200);
+            camera.position.set(90, 360, 900);
+            camera.lookAt(0, 30, -260);
 
             let renderer;
             try {
@@ -1159,7 +1160,7 @@
             key.position.set(160, 260, 180);
             scene.add(key);
 
-            const grid = new THREE.GridHelper(520, 13, 0x334155, 0x1f2937);
+            const grid = new THREE.GridHelper(1040, 26, 0x334155, 0x1f2937);
             grid.position.y = -2;
             scene.add(grid);
 
@@ -1192,6 +1193,7 @@
             pitchGroup.add(barrel);
             yawGroup.add(pitchGroup);
             turret.add(yawGroup);
+            turret.scale.setScalar(0.7);
             scene.add(turret);
 
             worldViz = {
