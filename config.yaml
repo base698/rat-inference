@@ -120,7 +120,7 @@ tracking:
   world_frame:
     enabled: true
     # World-frame computation is shadow-only unless both gates are true.
-    actuation_enabled: true
+    actuation_enabled: false
     calibration_validated: true
     gate_distance_mm: 750.0
     confirm_hits: 3
