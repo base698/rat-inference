@@ -96,7 +96,7 @@ tracking:
     max_yaw_step: 62
     max_pitch_step: 38
     control_fps: 20
-    belief_update_alpha: 0.75
+    belief_update_alpha: 0.55
     belief_pitch_update_alpha: 0.35
     belief_miss_decay: 0.82
     belief_min_confidence: 0.15
@@ -110,8 +110,8 @@ tracking:
     belief_reseed_max_interval: 0.8
     belief_velocity_alpha: 0.45
     belief_pitch_velocity_alpha: 0.25
-    belief_velocity_decay: 0.80
-    belief_max_velocity_raw_per_s: 250
+    belief_velocity_decay: 0.90
+    belief_max_velocity_raw_per_s: 400
     belief_max_pitch_velocity_raw_per_s: 180
     belief_max_prediction_age: 0.45
 
