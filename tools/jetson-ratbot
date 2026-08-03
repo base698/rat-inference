@@ -25,6 +25,7 @@ run_container() {
   mkdir -p "$DIR"/detections "$DIR"/runs "$DIR"/run_logs
   docker run -d \
     --name "$NAME" \
+    -e RATBOT_CAMERA_LATENCY_S=0.05 \
     --restart unless-stopped \
     --privileged \
     --ipc=host \
