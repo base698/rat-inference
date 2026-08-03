@@ -15,6 +15,7 @@ import yaml
 from datetime import datetime
 import uvicorn
 import numpy as np
+from collections import deque
 from ratbot.vision.yolo_inference import run_inference as yolo_run_inference, extract_detections
 from ratbot.vision.camera_source import CameraSource
 from ratbot.vision.overlay import OverlayRenderer
@@ -490,6 +491,8 @@ class CameraTracker:
         self.detection_count = 0
         self.latest_frame = None
         self.latest_raw_frame = None
+        self.pose_history = deque(maxlen=90)  # (monotonic_t, yaw, pitch) at ~30Hz
+        self.camera_latency_s = float(os.environ.get("RATBOT_CAMERA_LATENCY_S", "0.10"))
         self.latest_detection = False
         self.latest_bbox = None  # Store latest bounding box (x1, y1, x2, y2)
         self.latest_center_point = None  # Store latest center point (x, y)
@@ -1241,6 +1244,23 @@ class CameraTracker:
         """Move servos toward the current angular target belief."""
         self.tracking_controller.track_once()
 
+    def pose_at(self, target_time):
+        """Servo pose closest to target_time from the pose history.
+
+        Compensates for camera pipeline latency: the frame content is older
+        than the moment we read it, so the pose paired with a detection must
+        come from when the photons actually arrived.
+        """
+        best = None
+        for entry in reversed(self.pose_history):
+            if entry[0] <= target_time:
+                best = entry
+                break
+            best = entry
+        if best is None:
+            return self.current_yaw, self.current_pitch
+        return best[1], best[2]
+
     def capture_video_frame(self):
         """Capture a video frame at 30 FPS with overlays"""
         if not self.camera_active or not self.camera:
@@ -1260,6 +1280,7 @@ class CameraTracker:
                     if yaw_pos is not None and pitch_pos is not None:
                         self.current_yaw = yaw_pos
                         self.current_pitch = pitch_pos
+                        self.pose_history.append((time.monotonic(), yaw_pos, pitch_pos))
                 except Exception as e:
                     # Silently fail on read errors (don't spam console at 30 FPS)
                     pass
@@ -1428,13 +1449,16 @@ class CameraTracker:
                 # World mode already updated every valid 3D detection above.  The
                 # legacy angular belief remains the default/fallback mode.
                 if not self.world_tracking:
+                    frame_pose_yaw, frame_pose_pitch = self.pose_at(
+                        measurement_time - self.camera_latency_s
+                    )
                     self.update_target_belief(
                         center_x,
                         center_y,
                         confidence,
                         depth_mm=depth_mm,
-                        pose_yaw=pose_yaw,
-                        pose_pitch=pose_pitch,
+                        pose_yaw=frame_pose_yaw,
+                        pose_pitch=frame_pose_pitch,
                     )
 
                 # Auto-trigger disabled - only trigger manually via button
