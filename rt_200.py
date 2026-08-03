@@ -1115,9 +1115,21 @@ class CameraTracker:
         except OSError as exc:
             print(f"World-track log error: {exc}")
 
-    def update_target_belief(self, center_x, center_y, confidence, depth_mm=None):
-        """Update angular target belief from one detection observation."""
-        observation = self.pixel_to_target_position(center_x, center_y, depth_mm=depth_mm)
+    def update_target_belief(self, center_x, center_y, confidence, depth_mm=None,
+                             pose_yaw=None, pose_pitch=None):
+        """Update angular target belief from one detection observation.
+
+        pose_yaw/pose_pitch anchor the pixel error to the servo pose captured
+        with the frame; using the live position instead injects the turret's
+        own motion into the observation and makes the loop hunt.
+        """
+        observation = self.observation_converter.to_servo_target(
+            target_x=center_x,
+            target_y=center_y,
+            current_yaw=self.current_yaw if pose_yaw is None else pose_yaw,
+            current_pitch=self.current_pitch if pose_pitch is None else pose_pitch,
+            depth_mm=depth_mm,
+        )
         belief = self.target_belief.update(observation["yaw"], observation["pitch"], confidence)
 
         print(
@@ -1421,6 +1433,8 @@ class CameraTracker:
                         center_y,
                         confidence,
                         depth_mm=depth_mm,
+                        pose_yaw=pose_yaw,
+                        pose_pitch=pose_pitch,
                     )
 
                 # Auto-trigger disabled - only trigger manually via button
