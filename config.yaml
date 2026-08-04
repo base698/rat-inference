@@ -36,8 +36,10 @@ tracking:
   # Hardware motion shaping written once at startup (0 = leave register alone)
   servo_acceleration: 30   # STS3215 Acceleration register - servo ramps every goal itself
   servo_max_speed: 0       # Goal_Velocity cap in position mode
+  # Tracking controller: angular | velocity | rl  (see ratbot/robot/controllers.py)
+  controller: velocity
   velocity_control:
-    enabled: true
+    enabled: true   # legacy switch; the explicit 'controller' name above wins
     kp_yaw: 6.0            # (raw/s of commanded velocity) per raw unit of error
     kp_pitch: 5.5
     max_accel_raw_per_s2: 3500

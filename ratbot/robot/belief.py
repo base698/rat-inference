@@ -523,9 +523,18 @@ class VelocityFormController:
         self.vel_pitch = 0.0
         self.last_time = self.clock()
 
-    def _axis(self, error, measured_vel, prev_vel, kp, damping, max_vel, dt):
-        target_vel = 0.0 if abs(error) <= self.deadband_raw else kp * error
-        target_vel -= damping * measured_vel
+    def _desired_velocities(self, belief, yaw_error, pitch_error,
+                            measured_yaw_vel, measured_pitch_vel):
+        """Velocity DECISION hook — subclasses (e.g. an RL policy) override
+        this and inherit the shared clip/accelerate/integrate/clamp pipeline.
+        Returns (yaw_raw_per_s, pitch_raw_per_s) before limiting."""
+        v_yaw = 0.0 if abs(yaw_error) <= self.deadband_raw else self.kp_yaw * yaw_error
+        v_yaw -= self.damping_yaw * measured_yaw_vel
+        v_pitch = 0.0 if abs(pitch_error) <= self.deadband_raw else self.kp_pitch * pitch_error
+        v_pitch -= self.damping_pitch * measured_pitch_vel
+        return v_yaw, v_pitch
+
+    def _limit_velocity(self, target_vel, prev_vel, max_vel, dt):
         target_vel = max(-max_vel, min(max_vel, target_vel))
         # Rate-limit acceleration only; braking (shrinking |velocity| or
         # reversing toward zero) is allowed instantly so the commanded
@@ -566,12 +575,10 @@ class VelocityFormController:
         yaw_error = belief["yaw"] - self.cmd_yaw
         pitch_error = belief["pitch"] - self.cmd_pitch
 
-        self.vel_yaw = self._axis(
-            yaw_error, measured_yaw_vel, self.vel_yaw,
-            self.kp_yaw, self.damping_yaw, self.max_yaw_velocity, dt)
-        self.vel_pitch = self._axis(
-            pitch_error, measured_pitch_vel, self.vel_pitch,
-            self.kp_pitch, self.damping_pitch, self.max_pitch_velocity, dt)
+        want_yaw, want_pitch = self._desired_velocities(
+            belief, yaw_error, pitch_error, measured_yaw_vel, measured_pitch_vel)
+        self.vel_yaw = self._limit_velocity(want_yaw, self.vel_yaw, self.max_yaw_velocity, dt)
+        self.vel_pitch = self._limit_velocity(want_pitch, self.vel_pitch, self.max_pitch_velocity, dt)
 
         self.cmd_yaw += self.vel_yaw * dt
         self.cmd_pitch += self.vel_pitch * dt

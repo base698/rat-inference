@@ -8,6 +8,7 @@ Pipeline behavior lives in the mixins:
 """
 
 from ratbot.app.deps import *  # noqa: F401,F403
+from ratbot.robot.controllers import make_tracking_controller
 from ratbot.app.config_loader import *  # noqa: F401,F403
 from ratbot.app.video import VideoPipelineMixin
 from ratbot.app.detection import DetectionPipelineMixin
@@ -257,6 +258,11 @@ class CameraTracker(WorldGlueMixin, BeliefGlueMixin, DetectionPipelineMixin, Vid
         vc = tracking_config.get('velocity_control') or {}
         self.velocity_control_enabled = bool(vc.get('enabled', False))
         self.velocity_control_cfg = vc
+        # Explicit name wins; legacy velocity_control.enabled keeps working.
+        self.tracking_controller_name = str(
+            tracking_config.get('controller')
+            or ('velocity' if self.velocity_control_enabled else 'angular')
+        )
         self.measured_yaw_velocity = 0.0
         self.measured_pitch_velocity = 0.0
         self.motor_readback_interval = 1.0 / self.motor_readback_fps if self.motor_readback_fps > 0 else 0.0
@@ -389,41 +395,16 @@ class CameraTracker(WorldGlueMixin, BeliefGlueMixin, DetectionPipelineMixin, Vid
             if self.world_tracking and self.world_actuation_enabled
             else self.target_belief
         )
-        if self.velocity_control_enabled:
-            vc = self.velocity_control_cfg
-            self.tracking_controller = VelocityFormController(
-                robot=self,
-                belief=controller_belief,
-                bounds=servo_bounds,
-                control_fps=tracking_control_fps,
-                kp_yaw=float(vc.get('kp_yaw', 6.0)),
-                kp_pitch=float(vc.get('kp_pitch', 5.5)),
-                max_yaw_velocity=float(vc.get(
-                    'max_yaw_velocity_raw_per_s',
-                    self.max_yaw_step * tracking_control_fps)),
-                max_pitch_velocity=float(vc.get(
-                    'max_pitch_velocity_raw_per_s',
-                    self.max_pitch_step * tracking_control_fps)),
-                max_accel=float(vc.get('max_accel_raw_per_s2', 3500.0)),
-                deadband_raw=belief_deadband_raw,
-                damping_yaw=float(vc.get('damping_yaw', 0.0)),
-                damping_pitch=float(vc.get('damping_pitch', 0.0)),
-                reconcile_rate=float(vc.get('reconcile_rate', 2.0)),
-            )
-            print("Tracking controller: velocity-form (FPS-independent gains)")
-        else:
-            self.tracking_controller = AngularBeliefController(
-                robot=self,
-                belief=controller_belief,
-                bounds=servo_bounds,
-                control_fps=tracking_control_fps,
-                max_yaw_step=self.max_yaw_step,
-                max_pitch_step=self.max_pitch_step,
-                max_yaw_speed_raw_per_s=self.max_yaw_speed_raw_per_s,
-                max_pitch_speed_raw_per_s=self.max_pitch_speed_raw_per_s,
-                deadband_raw=belief_deadband_raw,
-                min_step_raw=belief_min_step_raw
-            )
+        self.tracking_controller = make_tracking_controller(
+            self.tracking_controller_name,
+            robot=self,
+            belief=controller_belief,
+            bounds=servo_bounds,
+            control_fps=tracking_control_fps,
+            options=self.velocity_control_cfg,
+        )
+        print(f"Tracking controller: {self.tracking_controller_name} "
+              f"({type(self.tracking_controller).__name__})")
 
         # Create detections directory
         self.detections_dir = DETECTIONS_DIR
