@@ -1,0 +1,105 @@
+# Ratbot 960 camera + belief-controller test handoff
+
+Recovered from the July 21, 2026 Ratbot history, git commits, README, and Jetson shell history.
+
+## What changed
+
+- Camera capture became configurable instead of being fixed at 640×480 (`7f0cf90`, **Support configurable camera frame size**).
+- The live CSI stereo configuration was promoted to **960×720** in `config.yaml`; YOLO `imgsz` was also set to `960` (`a986a7c`, **Promote 960 world tracking config**).
+- High-resolution stereo calibration capture was fixed so requested dimensions are preserved (`e991c62`).
+- A new 960×720 calibration was captured and committed at `tools/vision/calibration/output_960/stereo_calibration.npz` (`9067fb8`). Its recorded values were stereo RMS `0.810px`, solved baseline `41.64mm`, and physical/effective baseline override `52.5mm`.
+- `run.sh rt200` was updated to use that 960 calibration, baseline `52.5`, the TensorRT rat model, CUDA device `0`, and 20 FPS inference by default.
+- At the time of the final test, logs confirmed **960×720 CSI stereo**, `cuda:0`, and roughly 18–20 inference FPS after warmup.
+
+## Resume testing on the Jetson
+
+```bash
+ssh base698@jetson
+cd ~/rat-inference
+
+# Stop the existing detached container before starting another one.
+docker stop rat-inference 2>/dev/null || true
+
+# Current default: 960×720 CSI stereo + TensorRT rat model + world tracker.
+./run.sh rt200
+
+# Watch startup/detections/control-loop output.
+docker logs -f rat-inference
+```
+
+Web UI: `http://192.168.4.29:8000/`
+
+If code, config, or the Docker image has changed since the last build:
+
+```bash
+cd ~/rat-inference
+git pull --rebase --autostash origin main
+./run.sh build
+docker stop rat-inference 2>/dev/null || true
+./run.sh rt200
+docker logs -f rat-inference
+```
+
+## Run the angular belief controller
+
+World-frame tracking is now enabled by default. Add `--disable-world-tracking` to A/B test the older angular belief controller with the same 960 camera, stereo calibration, model, and servos:
+
+```bash
+cd ~/rat-inference
+docker stop rat-inference 2>/dev/null || true
+./run.sh rt200 --disable-world-tracking
+docker logs -f rat-inference
+```
+
+The fully explicit non-Docker equivalent recorded in the README was:
+
+```bash
+uv run --extra jetson python rt_200.py \
+  --enable-camera \
+  --use-csi \
+  --stereo \
+  --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
+  --baseline-override 52.5 \
+  --port /dev/ttyACM0 \
+  --device 0 \
+  --disable-world-tracking
+```
+
+The belief controller keeps a yaw/pitch target belief in turret coordinates, smooths detections, estimates short-lived target velocity, coasts briefly through missed detections, rejects unconfirmed far jumps, and drives the servos in a separate control loop. The test tuning around this work used belief update alpha `0.75`, pitch alpha `0.35`, miss decay `0.90`, min confidence `0.15`, max age `1.0s`, jump distance `160` raw units with two matching detections, yaw/pitch velocity caps `600/180 raw/s`, and prediction up to `0.45s`. The UI's **Clear Belief** control resets belief and PID state without recentering the turret.
+
+## Can/cup/bottle comparison test
+
+This is the recovered raw-COCO comparison command, forced onto the belief controller:
+
+```bash
+cd ~/rat-inference
+docker stop rat-inference 2>/dev/null || true
+./run.sh rt200 \
+  --model yolo11n.pt \
+  --target-class bottle \
+  --target-class cup \
+  --confidence 0.30 \
+  --device 0 \
+  --disable-world-tracking
+docker logs -f rat-inference
+```
+
+For the corresponding world-tracker comparison, omit `--disable-world-tracking`. The later final world-tracking command was shortened to:
+
+```bash
+./run.sh rt200 --model yolo11n.pt --confidence 0.30 --device 0
+```
+
+Note: the test can was only detected as COCO `cup` at about `0.06` confidence in one captured frame, so `0.30` can still produce no accepted boxes. For a can-only diagnostic, temporarily try `--confidence 0.05`, use a clearer COCO-style bottle/cup, or use the custom rat model for actual rat testing.
+
+## Useful checks
+
+```bash
+docker ps --filter name=rat-inference
+docker logs --tail 150 rat-inference
+curl -s http://127.0.0.1:8000/status
+curl -s http://127.0.0.1:8000/metrics | grep '^ratbot_'
+```
+
+Expected startup facts: camera `960×720`, stereo calibration `output_960`, effective YOLO device `cuda:0`, and either `world_tracking_enabled=1` (default) or angular belief control when launched with `--disable-world-tracking`.
+

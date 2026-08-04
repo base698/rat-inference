@@ -77,15 +77,23 @@ class CameraTrackerWorldWiringTests(unittest.TestCase):
         tracks = tracker.world_tracker.get_tracks()
         initial_yaw = tracker.current_yaw
         tracker.world_belief.clock = lambda: 10.0
-        tracker.tracking_controller.track_once()
+        controller = tracker.tracking_controller
+        if hasattr(controller, "clock"):
+            # velocity-form controller: fixed dt tick; bound is velocity * dt
+            tick = {"now": 10.0}
+            controller.clock = lambda: tick["now"]
+            controller.last_time = 10.0
+            tick["now"] = 10.05
+            controller.track_once()
+            step_bound = controller.max_yaw_velocity * 0.05 + 1
+        else:
+            controller.track_once()
+            step_bound = tracker.max_yaw_step
 
         self.assertEqual(len(tracks), 1)
         self.assertTrue(tracks[0].selected)
         self.assertLess(tracker.current_yaw, initial_yaw)
-        self.assertLessEqual(
-            initial_yaw - tracker.current_yaw,
-            tracker.max_yaw_step,
-        )
+        self.assertLessEqual(initial_yaw - tracker.current_yaw, step_bound)
 
     def test_world_tracking_is_shadow_only_until_calibration_and_actuation_are_enabled(self):
         tracker = CameraTracker(

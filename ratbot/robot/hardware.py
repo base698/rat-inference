@@ -40,7 +40,53 @@ class TrackingServoController:
         self.motor_bus = None
         self.current_yaw = int(yaw_center)
         self.current_pitch = int(pitch_center)
+        self.commanded_yaw = int(yaw_center)
+        self.commanded_pitch = int(pitch_center)
         self.lock = threading.Lock()
+
+    @staticmethod
+    def _decode_feetech_signed(value):
+        """Feetech sign-magnitude: bit 15 set means negative."""
+        value = int(value)
+        if value & 0x8000:
+            return -(value & 0x7FFF)
+        return value
+
+    def configure_motion(self, acceleration=None, max_speed=None):
+        """Write hardware-level motion shaping registers once at startup.
+
+        acceleration -> STS3215 ``Acceleration`` register (the servo ramps
+        every position goal itself). max_speed -> ``Goal_Velocity`` cap in
+        position mode. None/0 skips a register.
+        """
+        if not self.motor_bus or not self.connected:
+            return
+        for register, value in (("Acceleration", acceleration), ("Goal_Velocity", max_speed)):
+            if not value:
+                continue
+            for motor in ("yaw", "pitch"):
+                try:
+                    with self.lock:
+                        self.motor_bus.write(register, motor, int(value), normalize=False)
+                    print(f"  Motion shaping: {motor} {register}={int(value)}")
+                except Exception as exc:
+                    print(f"  Motion shaping skipped ({motor} {register}): {exc}")
+
+    def read_state(self):
+        """Read measured positions and velocities (raw units, signed)."""
+        if not self.connected or not self.motor_bus:
+            return self.current_yaw, self.current_pitch, 0.0, 0.0
+        with self.lock:
+            yaw_pos = self.motor_bus.read("Present_Position", "yaw", normalize=False)
+            pitch_pos = self.motor_bus.read("Present_Position", "pitch", normalize=False)
+            try:
+                yaw_vel = self._decode_feetech_signed(
+                    self.motor_bus.read("Present_Velocity", "yaw", normalize=False))
+                pitch_vel = self._decode_feetech_signed(
+                    self.motor_bus.read("Present_Velocity", "pitch", normalize=False))
+            except Exception:
+                yaw_vel = pitch_vel = 0.0
+        return int(yaw_pos), int(pitch_pos), float(yaw_vel), float(pitch_vel)
 
     def read_measured_positions(self):
         """Read Present_Position or fail closed when connected hardware fails.
@@ -150,6 +196,7 @@ class TrackingServoController:
             self.bounds.yaw_min,
             min(self.bounds.yaw_max, int(position)),
         )
+        self.commanded_yaw = position
         self.current_yaw = position
         if self.enabled:
             self.raw_write("yaw", position)
@@ -160,6 +207,7 @@ class TrackingServoController:
             self.bounds.pitch_min,
             min(self.bounds.pitch_max, int(position)),
         )
+        self.commanded_pitch = position
         self.current_pitch = position
         if self.enabled:
             self.raw_write("pitch", position)

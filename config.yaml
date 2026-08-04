@@ -32,7 +32,18 @@ tracking:
   depth_max_valid_mm: 6000.0
   depth_adjust_smoothing_alpha: 0.20
   depth_adjust_missing_decay: 0.85
-  motor_readback_fps: 10
+  motor_readback_fps: 20
+  # Hardware motion shaping written once at startup (0 = leave register alone)
+  servo_acceleration: 30   # STS3215 Acceleration register - servo ramps every goal itself
+  servo_max_speed: 0       # Goal_Velocity cap in position mode
+  velocity_control:
+    enabled: true
+    kp_yaw: 6.0            # (raw/s of commanded velocity) per raw unit of error
+    kp_pitch: 5.5
+    max_accel_raw_per_s2: 3500
+    damping_yaw: 0.0       # scales measured Present_Velocity feedback (units uncertain - tune live)
+    damping_pitch: 0.0
+    reconcile_rate: 2.0    # 1/s leak of commanded state toward measured
 
   # Base crosshair position
   crosshair:
