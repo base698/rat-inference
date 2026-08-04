@@ -1,6 +1,11 @@
 """Robot runtime interfaces and implementations."""
 
-from .belief import AngularBeliefController, AngularTargetBelief, ServoBounds
+from .belief import (
+    AngularBeliefController,
+    AngularTargetBelief,
+    ServoBounds,
+    VelocityFormController,
+)
 from .hardware import (
     TrackingServoController,
     TriggerServoConfig,
@@ -18,6 +23,7 @@ from .interfaces import DetectionData, NumericPosition, TrackerRobot
 
 __all__ = [
     "AngularBeliefController",
+    "VelocityFormController",
     "AngularTargetBelief",
     "CrosshairAiming",
     "DepthCrosshairCompensation",

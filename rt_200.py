@@ -32,6 +32,7 @@ from ratbot.tracking import (
 from ratbot.tracking.recording import TrackRecordingStore
 from ratbot.robot import (
     AngularBeliefController,
+    VelocityFormController,
     AngularTargetBelief,
     CrosshairAiming,
     DepthCrosshairCompensation,
@@ -543,6 +544,13 @@ class CameraTracker:
             ),
         )
         self.motor_readback_fps = max(0.0, float(tracking_config.get('motor_readback_fps', 10)))
+        self.servo_acceleration = int(tracking_config.get('servo_acceleration', 0) or 0)
+        self.servo_max_speed = int(tracking_config.get('servo_max_speed', 0) or 0)
+        vc = tracking_config.get('velocity_control') or {}
+        self.velocity_control_enabled = bool(vc.get('enabled', False))
+        self.velocity_control_cfg = vc
+        self.measured_yaw_velocity = 0.0
+        self.measured_pitch_velocity = 0.0
         self.motor_readback_interval = 1.0 / self.motor_readback_fps if self.motor_readback_fps > 0 else 0.0
         self.last_motor_readback_time = 0.0
         self.stereo_depth.last_depth_debug = "not computed"
@@ -673,18 +681,41 @@ class CameraTracker:
             if self.world_tracking and self.world_actuation_enabled
             else self.target_belief
         )
-        self.tracking_controller = AngularBeliefController(
-            robot=self,
-            belief=controller_belief,
-            bounds=servo_bounds,
-            control_fps=tracking_control_fps,
-            max_yaw_step=self.max_yaw_step,
-            max_pitch_step=self.max_pitch_step,
-            max_yaw_speed_raw_per_s=self.max_yaw_speed_raw_per_s,
-            max_pitch_speed_raw_per_s=self.max_pitch_speed_raw_per_s,
-            deadband_raw=belief_deadband_raw,
-            min_step_raw=belief_min_step_raw
-        )
+        if self.velocity_control_enabled:
+            vc = self.velocity_control_cfg
+            self.tracking_controller = VelocityFormController(
+                robot=self,
+                belief=controller_belief,
+                bounds=servo_bounds,
+                control_fps=tracking_control_fps,
+                kp_yaw=float(vc.get('kp_yaw', 6.0)),
+                kp_pitch=float(vc.get('kp_pitch', 5.5)),
+                max_yaw_velocity=float(vc.get(
+                    'max_yaw_velocity_raw_per_s',
+                    self.max_yaw_step * tracking_control_fps)),
+                max_pitch_velocity=float(vc.get(
+                    'max_pitch_velocity_raw_per_s',
+                    self.max_pitch_step * tracking_control_fps)),
+                max_accel=float(vc.get('max_accel_raw_per_s2', 3500.0)),
+                deadband_raw=belief_deadband_raw,
+                damping_yaw=float(vc.get('damping_yaw', 0.0)),
+                damping_pitch=float(vc.get('damping_pitch', 0.0)),
+                reconcile_rate=float(vc.get('reconcile_rate', 2.0)),
+            )
+            print("Tracking controller: velocity-form (FPS-independent gains)")
+        else:
+            self.tracking_controller = AngularBeliefController(
+                robot=self,
+                belief=controller_belief,
+                bounds=servo_bounds,
+                control_fps=tracking_control_fps,
+                max_yaw_step=self.max_yaw_step,
+                max_pitch_step=self.max_pitch_step,
+                max_yaw_speed_raw_per_s=self.max_yaw_speed_raw_per_s,
+                max_pitch_speed_raw_per_s=self.max_pitch_speed_raw_per_s,
+                deadband_raw=belief_deadband_raw,
+                min_step_raw=belief_min_step_raw
+            )
 
         # Create detections directory
         self.detections_dir = DETECTIONS_DIR
@@ -694,6 +725,11 @@ class CameraTracker:
         # Initialize tracking servos if enabled
         if self.enable_servos and not self.no_connect and FEETECH_AVAILABLE:
             self.tracking_servos.connect()
+            if self.tracking_servos.connected:
+                self.tracking_servos.configure_motion(
+                    acceleration=self.servo_acceleration,
+                    max_speed=self.servo_max_speed,
+                )
 
         # Initialize trigger servo if enabled
         if self.trigger_servo_enabled:
@@ -1275,11 +1311,15 @@ class CameraTracker:
             if self.connected and self.tracking_servos.motor_bus and readback_due:
                 try:
                     self.last_motor_readback_time = time.time()
-                    yaw_pos, pitch_pos = self.read_motor_positions()
+                    yaw_pos, pitch_pos, yaw_vel, pitch_vel = (
+                        self.tracking_servos.read_state()
+                    )
                     # Only update if we got valid readings
                     if yaw_pos is not None and pitch_pos is not None:
                         self.current_yaw = yaw_pos
                         self.current_pitch = pitch_pos
+                        self.measured_yaw_velocity = yaw_vel
+                        self.measured_pitch_velocity = pitch_vel
                         self.pose_history.append((time.monotonic(), yaw_pos, pitch_pos))
                 except Exception as e:
                     # Silently fail on read errors (don't spam console at 30 FPS)

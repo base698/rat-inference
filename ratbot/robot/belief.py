@@ -470,3 +470,151 @@ class AngularBeliefController:
         thread = threading.Thread(target=self.run, daemon=True)
         thread.start()
         print(f"Tracking control thread started ({self.control_fps:g} FPS target)")
+
+
+class VelocityFormController:
+    """Velocity-output tracking controller integrated into position goals.
+
+    Each tick: velocity_cmd = kp * error - damping * measured_velocity,
+    clipped to max velocity, rate-limited by max acceleration, integrated
+    into a commanded position that is clamped and written as Goal_Position.
+    Gains are per-second, so behavior is control-FPS independent.
+
+    Error is computed against the controller's own commanded state (first
+    order, cannot double-integrate into oscillation) while a slow
+    ``reconcile_rate`` leak pulls commanded toward measured so accumulated
+    command-vs-physical offset bleeds away.
+    """
+
+    def __init__(self, robot, belief, bounds, control_fps=20,
+                 kp_yaw=6.0, kp_pitch=5.5,
+                 max_yaw_velocity=1200.0, max_pitch_velocity=760.0,
+                 max_accel=3500.0, deadband_raw=8,
+                 damping_yaw=0.0, damping_pitch=0.0,
+                 reconcile_rate=2.0):
+        self.robot = robot
+        self.belief = belief
+        self.bounds = bounds
+        self.control_fps = max(1.0, float(control_fps))
+        self.kp_yaw = float(kp_yaw)
+        self.kp_pitch = float(kp_pitch)
+        self.max_yaw_velocity = abs(float(max_yaw_velocity))
+        self.max_pitch_velocity = abs(float(max_pitch_velocity))
+        self.max_accel = abs(float(max_accel))
+        self.deadband_raw = max(0, int(deadband_raw))
+        self.damping_yaw = float(damping_yaw)
+        self.damping_pitch = float(damping_pitch)
+        self.reconcile_rate = max(0.0, float(reconcile_rate))
+        self.cmd_yaw = None
+        self.cmd_pitch = None
+        self.vel_yaw = 0.0
+        self.vel_pitch = 0.0
+        self.last_time = time.time()
+        self.loop_count = 0
+        self.window_start = time.time()
+        self.last_actual_fps = 0.0
+        self._log_countdown = 0
+
+    def reset(self):
+        self.cmd_yaw = None
+        self.cmd_pitch = None
+        self.vel_yaw = 0.0
+        self.vel_pitch = 0.0
+        self.last_time = time.time()
+
+    def _axis(self, error, measured_vel, prev_vel, kp, damping, max_vel, dt):
+        target_vel = 0.0 if abs(error) <= self.deadband_raw else kp * error
+        target_vel -= damping * measured_vel
+        target_vel = max(-max_vel, min(max_vel, target_vel))
+        # Rate-limit acceleration only; braking (shrinking |velocity| or
+        # reversing toward zero) is allowed instantly so the commanded
+        # trajectory can stop dead at the target instead of creeping past.
+        if abs(target_vel) > abs(prev_vel) and target_vel * prev_vel >= 0:
+            max_delta = self.max_accel * dt
+            target_vel = max(prev_vel - max_delta, min(prev_vel + max_delta, target_vel))
+        return target_vel
+
+    def track_once(self):
+        belief = self.belief.get_active()
+        if belief is None:
+            if self.cmd_yaw is not None:
+                self.reset()
+            return
+
+        now = time.time()
+        dt = min(0.2, max(0.005, now - self.last_time))
+        self.last_time = now
+
+        measured_yaw = float(self.robot.current_yaw)
+        measured_pitch = float(self.robot.current_pitch)
+        measured_yaw_vel = float(getattr(self.robot, "measured_yaw_velocity", 0.0))
+        measured_pitch_vel = float(getattr(self.robot, "measured_pitch_velocity", 0.0))
+
+        if self.cmd_yaw is None:
+            self.cmd_yaw = measured_yaw
+            self.cmd_pitch = measured_pitch
+            self.vel_yaw = 0.0
+            self.vel_pitch = 0.0
+
+        # slow leak of commanded state toward measured reality
+        if self.reconcile_rate > 0:
+            leak = min(1.0, self.reconcile_rate * dt)
+            self.cmd_yaw += (measured_yaw - self.cmd_yaw) * leak
+            self.cmd_pitch += (measured_pitch - self.cmd_pitch) * leak
+
+        yaw_error = belief["yaw"] - self.cmd_yaw
+        pitch_error = belief["pitch"] - self.cmd_pitch
+
+        self.vel_yaw = self._axis(
+            yaw_error, measured_yaw_vel, self.vel_yaw,
+            self.kp_yaw, self.damping_yaw, self.max_yaw_velocity, dt)
+        self.vel_pitch = self._axis(
+            pitch_error, measured_pitch_vel, self.vel_pitch,
+            self.kp_pitch, self.damping_pitch, self.max_pitch_velocity, dt)
+
+        self.cmd_yaw += self.vel_yaw * dt
+        self.cmd_pitch += self.vel_pitch * dt
+        self.cmd_yaw = max(self.bounds.yaw_min, min(self.bounds.yaw_max, self.cmd_yaw))
+        self.cmd_pitch = max(self.bounds.pitch_min, min(self.bounds.pitch_max, self.cmd_pitch))
+
+        goal_yaw = int(round(self.cmd_yaw))
+        goal_pitch = int(round(self.cmd_pitch))
+
+        self._log_countdown -= 1
+        if self._log_countdown <= 0:
+            self._log_countdown = 10
+            print(
+                "   Velocity control: "
+                f"belief=({belief['yaw']:.1f}, {belief['pitch']:.1f}, conf={belief['confidence']:.2f}), "
+                f"err=({yaw_error:.1f}, {pitch_error:.1f}), "
+                f"vel_cmd=({self.vel_yaw:.0f}, {self.vel_pitch:.0f}) raw/s, "
+                f"meas_vel=({measured_yaw_vel:.0f}, {measured_pitch_vel:.0f}), "
+                f"cmd=({goal_yaw}, {goal_pitch}) meas=({measured_yaw:.0f}, {measured_pitch:.0f})"
+            )
+
+        if goal_yaw != int(getattr(self.robot, "last_goal_yaw", -1)):
+            self.robot.set_yaw(goal_yaw)
+            self.robot.last_goal_yaw = goal_yaw
+        if goal_pitch != int(getattr(self.robot, "last_goal_pitch", -1)):
+            self.robot.set_pitch(goal_pitch)
+            self.robot.last_goal_pitch = goal_pitch
+
+    def run(self):
+        while self.robot.camera_active:
+            loop_start = time.time()
+            self.track_once()
+            self.loop_count += 1
+            window_elapsed = time.time() - self.window_start
+            if window_elapsed >= 5.0:
+                actual_fps = self.loop_count / window_elapsed
+                self.last_actual_fps = actual_fps
+                print(f"Tracking control actual FPS: {actual_fps:.1f} (target {self.control_fps:g})", flush=True)
+                self.loop_count = 0
+                self.window_start = time.time()
+            elapsed = time.time() - loop_start
+            time.sleep(max(0.0, (1.0 / self.control_fps) - elapsed))
+
+    def start(self):
+        thread = threading.Thread(target=self.run, daemon=True)
+        thread.start()
+        return thread
