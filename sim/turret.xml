@@ -1,0 +1,69 @@
+<mujoco model="ratbot-turret">
+  <!-- Yaw/pitch turret for RL experiments. The rotating top is the real
+       turret-with-jetson.stl (Fusion export, millimeters -> scale 0.001).
+       Servo raw<->radian mapping mirrors the hardware: yaw 1600-3100 raw
+       over 180deg, pitch 1-500 raw over 60deg (see docs/math.md #1). -->
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.005"/>
+
+  <visual>
+    <global offwidth="1280" offheight="720" azimuth="130" elevation="-20"/>
+  </visual>
+  <statistic center="0 0 0.25" extent="1.2"/>
+
+  <asset>
+    <mesh name="turret_top" file="turret-with-jetson.stl" scale="0.001 0.001 0.001"/>
+    <texture type="skybox" builtin="gradient" rgb1="0.08 0.09 0.12" rgb2="0.02 0.02 0.04" width="32" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.15 0.17 0.20" rgb2="0.20 0.22 0.26" width="256" height="256"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.1"/>
+    <material name="printed" rgba="0.25 0.25 0.28 1"/>
+  </asset>
+
+  <default>
+    <default class="turret">
+      <joint armature="0.05" damping="0.6" frictionloss="0.05"/>
+      <position kp="18" kv="1.2" inheritrange="1"/>
+    </default>
+    <default class="visual">
+      <geom type="mesh" group="2" contype="0" conaffinity="0"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light pos="0.5 -0.5 1.5" dir="-0.3 0.3 -1" diffuse="0.9 0.9 0.9"/>
+    <geom name="floor" type="plane" size="2 2 0.05" material="grid"/>
+
+    <!-- fixed base column -->
+    <geom name="base" type="cylinder" pos="0 0 0.05" size="0.045 0.05" material="printed"/>
+
+    <!-- yaw stage: carries the printed head (STL) -->
+    <body name="yaw_stage" pos="0 0 0.10">
+      <joint name="yaw" class="turret" type="hinge" axis="0 0 1" range="-1.5708 1.5708"/>
+      <geom name="yaw_hub" type="cylinder" pos="0 0 0.01" size="0.035 0.012" material="printed" mass="0.15"/>
+      <geom name="turret_top_visual" class="visual" mesh="turret_top" pos="0 0 0.02" material="printed"/>
+
+      <!-- pitch stage: camera/barrel line -->
+      <body name="pitch_stage" pos="0 0 0.16">
+        <inertial pos="0.02 0 0" mass="0.35" diaginertia="4e-4 4e-4 2e-4"/>
+        <joint name="pitch" class="turret" type="hinge" axis="0 1 0" range="-0.5236 0.5236"/>
+        <geom name="barrel" type="capsule" fromto="0 0 0 0.11 0 0" size="0.011" rgba="0.16 0.65 0.38 1" mass="0.05"/>
+        <site name="muzzle" pos="0.12 0 0" size="0.005" rgba="1 0.3 0.2 1"/>
+        <camera name="bore" pos="0.05 0 0.03" xyaxes="0 -1 0 0 0 1" fovy="45"/>
+      </body>
+    </body>
+
+    <!-- target: mocap body the env moves around (a floating can) -->
+    <body name="target" mocap="true" pos="0.9 0 0.35">
+      <geom name="target_can" type="cylinder" size="0.033 0.084" rgba="0.75 0.15 0.12 0.9" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position class="turret" name="yaw" joint="yaw"/>
+    <position class="turret" name="pitch" joint="pitch"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 0" ctrl="0 0"/>
+  </keyframe>
+</mujoco>

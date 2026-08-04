@@ -26,6 +26,11 @@ jetson = [
     "feetech-servo-sdk>=1.0.0",
 ]
 
+# For the MuJoCo RL simulation harness (sim/)
+sim = [
+    "mujoco>=3.9",
+]
+
 # For dataset generation with Vertex AI (generate-dataset.py)
 dataset = [
     "google-cloud-aiplatform>=1.122.0",
