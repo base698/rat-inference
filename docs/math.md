@@ -63,8 +63,11 @@ Z_mm = focal_length_px × baseline_mm / disparity_px
 
 Closer objects → larger disparity. A can at disparity 20 px with a ~950 px
 focal length sits at ≈ 950 × 52.5 / 20 ≈ 2.5 m. When the overlay says
-"low texture", the disparity match failed and Z is garbage — which is why the
-angular controller (which needs no depth) drives the demo.
+"low texture", the disparity match failed and Z is garbage. The demo uses
+depth for the 3-D world view: world tracking runs in *shadow mode*, building
+depth-based tracks for display, while the servos are driven by the angular
+controller — chosen exactly because it keeps tracking through the moments
+when depth drops out.
 
 **Parallax / bore offset** (`aiming.py`, `depth_adjust_px`): the camera sits
 82 mm above the barrel, so where the camera should "look" to make the barrel
