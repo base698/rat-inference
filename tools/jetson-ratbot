@@ -52,7 +52,6 @@ run_container() {
       --calibration tools/vision/calibration/output_960/stereo_calibration.npz \
       --baseline-override 52.5 \
       --target-class item \
-      --disable-world-tracking \
       --confidence 0.45 \
       --device 0 \
       --inference-fps 20
