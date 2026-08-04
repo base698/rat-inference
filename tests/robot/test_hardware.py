@@ -124,8 +124,9 @@ class CameraTrackerHardwareWiringTests(unittest.TestCase):
 
     def test_detection_snapshots_prune_old_files_and_throttle_writes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            prior_dir = rt_200.DETECTIONS_DIR
-            rt_200.DETECTIONS_DIR = temp_dir
+            import ratbot.app.tracker as tracker_module
+            prior_dir = tracker_module.DETECTIONS_DIR
+            tracker_module.DETECTIONS_DIR = temp_dir
             try:
                 old_snapshot = Path(temp_dir) / "detection_old.jpg"
                 old_snapshot.write_bytes(b"old")
@@ -146,7 +147,7 @@ class CameraTrackerHardwareWiringTests(unittest.TestCase):
                 self.assertIsNone(second)
                 tracker.disconnect()
             finally:
-                rt_200.DETECTIONS_DIR = prior_dir
+                tracker_module.DETECTIONS_DIR = prior_dir
 
 
 class TriggerServoControllerTests(unittest.TestCase):

@@ -281,13 +281,25 @@ class CameraTrackerBeliefWiringTests(unittest.TestCase):
         initial_yaw = tracker.current_yaw
         initial_pitch = tracker.current_pitch
 
-        with patch("ratbot.robot.belief.time.time", return_value=100.0):
+        clock = {"now": 100.0}
+
+        def fake_time():
+            return clock["now"]
+
+        with patch("ratbot.robot.belief.time.time", side_effect=fake_time):
+            if hasattr(tracker.tracking_controller, "clock"):
+                tracker.tracking_controller.clock = fake_time
+                tracker.tracking_controller.last_time = fake_time()
             tracker.target_belief.update(
                 initial_yaw + 100,
                 initial_pitch + 50,
                 confidence=1.0,
             )
-            tracker.tracking_controller.track_once()
+            # Multiple ticks with advancing time: the velocity-form controller
+            # ramps through its acceleration limit rather than stepping at once.
+            for _ in range(20):
+                clock["now"] += 0.05
+                tracker.tracking_controller.track_once()
 
         self.assertGreater(tracker.current_yaw, initial_yaw)
         self.assertGreater(tracker.current_pitch, initial_pitch)

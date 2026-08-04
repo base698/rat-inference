@@ -102,3 +102,22 @@ def test_deadband_holds_still():
     ctrl = make(robot, belief)
     run_ticks(ctrl, 20)
     assert all(abs(p - 2200) <= 1 for a, p in robot.writes if a == "yaw")
+
+
+def test_reconcile_leak_pulls_commanded_toward_measured():
+    robot = FakeRobot()
+    belief = FakeBelief(yaw=2500, pitch=350)
+    ctrl = make(robot, belief, reconcile_rate=2.0, kp_yaw=0.0, kp_pitch=0.0)
+    run_ticks(ctrl, 1)          # anchors cmd at measured (2200)
+    ctrl.cmd_yaw = 2300         # simulate accumulated commanded-vs-physical offset
+    run_ticks(ctrl, 20)         # 1s of leak at 2/s, no proportional drive
+    assert abs(ctrl.cmd_yaw - 2200) < 30   # decayed most of the 100-raw offset
+
+
+def test_velocity_damping_opposes_measured_motion():
+    robot = FakeRobot()
+    robot.measured_yaw_velocity = 200.0    # turret already moving +
+    belief = FakeBelief(yaw=2200, pitch=250)  # zero error
+    ctrl = make(robot, belief, deadband_raw=0, damping_yaw=0.5)
+    run_ticks(ctrl, 1)
+    assert ctrl.vel_yaw < 0    # damping term pushes against measured velocity
