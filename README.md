@@ -8,6 +8,7 @@
 📊 **Dataset Generation** - AI-powered dataset creation using Vertex AI Gemini
 🎥 **Real-time Tracking** - Camera-based tracking with servo control (Jetson Nano)
 🏋️ **Model Training** - Train custom YOLO models with configurable image sizes
+🎮 **Pluggable Controllers** - angular | velocity | rl tracking controllers selected in config.yaml (`tracking.controller`)
 🔧 **Flexible Deployment** - Modular dependency groups for different use cases
 
 ## Quick Start
@@ -91,8 +92,8 @@ uv run python tools/vision/training/train.py --model-size m --epochs 150 --batch
 ```
 
 **Training Tips:**
-- Start with `imgsz=640` for faster training
-- Use larger sizes (800-1024) for better accuracy
+- Train at the resolution you will deploy (the live rig runs 960; the redbull demo model was trained/exported at 960)
+- Smaller sizes (640) train faster; larger sizes (800-1024) can score better offline
 - Smaller models (n, s) train faster but may be less accurate
 - See `TRAINING_GUIDE.md` for detailed instructions
 
@@ -227,10 +228,9 @@ snapshot every 2 seconds, removes snapshots older than 1 day, and keeps at most
 1000 files in `detections/`.
 
 The current CSI helper captures the IMX219 cameras at `1640x1232` and scales to
-the app's `640x480` frame. That gives a wider 4:3 field of view than the old
-`1280x720` input mode while keeping the web/video and inference frame size
-unchanged. Stereo calibration should be recaptured in this mode before trusting
-depth/world measurements.
+the app's `960x720` frame (`config.yaml: camera`). The live stereo calibration
+was captured in this mode (`tools/vision/calibration/output_960/`); recapture
+it if the frame size changes before trusting depth/world measurements.
 
 #### Stereo Depth + Laser Tracking
 
@@ -288,16 +288,17 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 
 **Performance Notes:**
 - `--inference-fps` is a scheduling target, not guaranteed throughput.
-- The tracker logs `Inference actual FPS` every few seconds. In live 640px stereo tracking tests, the current Python/Ultralytics path measured about `1.3-1.5` actual FPS despite a 14 FPS target.
-- The Jetson TensorRT engine at `runs/yolo11n-2025-10-23/weights/best.engine` is the preferred live path. The engine was exported from the 10-23 model for FP16 inference; Ultralytics does not accept `quantize=16` for this export, so use `half=True` when regenerating it.
-- The first TensorRT live tracker pass held about `13.9` actual FPS against a 14 FPS cap after warmup. The current tuning pass raises the cap to `20` FPS; if the tracker cannot hold that rate with depth and servo control enabled, reduce depth frequency or the inference target before increasing image size.
-- `imgsz=1024` is not recommended for live tracking until the 640px path is faster.
+- The tracker logs `Inference actual FPS` every few seconds. TensorRT is the only viable live path: the raw Python/Ultralytics `.pt` path measured ~14.9 FPS at 960px (and as low as 1.3-1.5 FPS in early 640px tests), while the FP16 TensorRT engine holds `~19.9` actual FPS against the 20 FPS target with stereo depth and servo control enabled (GPU ~41%).
+- Live demo engine: `runs/redbull/weights/best.engine` (960px FP16, single class `item`). Rat-hunting engine: `runs/yolo11n-2025-10-23/weights/best.engine` (640px). **Engines are fixed-size** - the config `imgsz` must match the engine's export size or inference errors out.
+- Ultralytics does not accept `quantize=16` for engine export; use `half=True` when regenerating.
 
 **Tracking Smoothness:**
 - Vision detections update an angular target belief in turret coordinates. The servo controller runs separately and moves toward that belief, so motion can continue smoothly between missed detections.
-- `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current test value: `0.75`. Non-jump stale/weak beliefs reset directly to the first new observation, while far jumps use the confirmation gate below.
-- `--belief-reseed-distance-raw` marks a far-away observation as a possible target jump. The first jump is ignored while the existing belief continues; a second matching jump within `--belief-reseed-max-interval` confirms reacquisition. Current test values: `160` raw units, `2` confirmations, `120` raw-unit match distance, `0.8s` interval, and `0.55` minimum confidence for jump reseeds.
-- `--belief-velocity-alpha`, `--belief-velocity-decay`, `--belief-max-velocity-raw-per-s`, and `--belief-max-prediction-age` add a bounded target-velocity estimate to the belief. This lets the controller continue briefly toward a target that was moving when detections drop at the frame edge. Current test values: `0.45`, `0.96`, `600 raw/s`, `0.45s`.
+- `--belief-update-alpha` controls how quickly new detections move the angular belief. Higher follows observations faster; lower is smoother but laggier. Current live value: `0.55` (0.75 visibly followed box jitter).
+- `--belief-reseed-distance-raw` marks a far-away observation as a possible target jump. The first jump is ignored while the existing belief continues; a second matching jump within `--belief-reseed-max-interval` confirms reacquisition. Current live values: `420` raw units, `2` confirmations, `300` raw-unit match distance (tighter gates made smooth lateral target motion look like a stream of outliers - staccato tracking).
+- Velocity coasting current live values: alpha `0.45`, decay `0.90`, cap `400 raw/s`, prediction age `0.45s`; miss decay `0.82` so detection dropouts freeze the turret rather than letting it wander.
+- Angular observations are anchored to the servo pose *at frame time* via a 30Hz pose history and `RATBOT_CAMERA_LATENCY_S` (0.05s): using the live pose instead injects the turret's own motion into the observation and causes hunting.
+- The tracking controller is selected by `tracking.controller` in config.yaml (`angular` | `velocity` | `rl`, see `ratbot/robot/controllers.py`). The live demo runs `velocity`: FPS-independent per-second gains, acceleration-limited velocity integrated into position goals, with STS3215 `Acceleration=30` hardware ramping. The math behind all of this is walked through in `docs/math.md`.
 - Pitch is damped separately because vertical detections are noisier: `--belief-pitch-update-alpha` is currently `0.35`, `--belief-pitch-velocity-alpha` is `0.25`, `--belief-max-pitch-velocity-raw-per-s` is `180`, and `--max-pitch-step` is `35`.
 - `--tracking-control-fps` controls how often the servo controller reads belief and commands the robot. Current test value: `60`.
 - `--max-yaw-step` and `--max-pitch-step` cap per-control-tick servo moves in raw units. `--max-yaw-speed-raw-per-s` and `--max-pitch-speed-raw-per-s` cap motion by elapsed time so higher control FPS produces smaller interpolated moves. Current test values: `45`, `35`, `900 raw/s`, and `700 raw/s`.
@@ -319,7 +320,8 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 - Add `--apply` only when you intentionally want to write persistent motor calibration.
 
 **Model Notes:**
-- `runs/yolo11n-2025-10-23/weights/best.engine` is the current preferred live tracking model on the Jetson.
+- `runs/redbull/weights/best.engine` (960px FP16, class `item`) is the live stage-demo model; `runs/redbull/weights/best.pt` is its source (mAP50 0.995, trained on `datasets/redbull`).
+- `runs/yolo11n-2025-10-23/weights/best.engine` (640px) is the preferred live model for actual rat tracking.
 - `runs/yolo11n-2025-10-23/weights/best.pt` is the source model for retraining, comparison, or regenerating the engine.
 - `runs/yolo11n-2025-10-24/weights/best.pt` is kept for comparison but performed worse in live testing.
 - Both custom rat models expose their target class as `item`; the TensorRT engine can appear as `class0` when metadata is absent.
@@ -337,6 +339,9 @@ docker run --rm --runtime=nvidia --ipc=host --network=host \
     half=True \
     device=0
 ```
+
+(`imgsz` must match how the engine will be run: 640 for the rat model,
+`imgsz=960` when regenerating the redbull demo engine.)
 
 #### Stereo Recalibration
 
@@ -708,8 +713,8 @@ python tools/vision/training/train.py --imgsz 1024  # Higher accuracy (requires 
 python tools/vision/inference/inference.py --device 0 --imgsz 640   # Default CUDA inference
 python tools/vision/inference/inference.py --device 0 --imgsz 1024  # Larger inference size
 
-# Real-time tracking
-python rt_200.py --device 0 --imgsz 640 --inference-fps 20   # Current real-time tracking target
+# Real-time tracking (the live rig runs 960 - config.yaml detection.imgsz)
+python rt_200.py --device 0 --imgsz 960 --inference-fps 20
 python rt_200.py --device 0 --imgsz 1024  # Higher accuracy, ~2-4 FPS on Jetson
 ```
 
@@ -774,21 +779,26 @@ uv run python rt_200.py \
 
 ## Model Performance
 
-### Jetson Nano 8GB
+### Jetson Orin (measured live, stereo depth + servo control enabled)
 
-| Image Size | FPS | Accuracy | Use Case |
-|------------|-----|----------|----------|
-| 640px | ~1.3-1.5 observed, 14 target cap | Good | Current live tracking |
-| 800px | Lower | Better | Offline testing |
-| 1024px | Much lower | Best | Offline/high-accuracy testing |
+| Path | Image Size | Actual FPS | Use Case |
+|------|-----------|------------|----------|
+| TensorRT FP16 (`best.engine`) | 960px | ~19.9 vs 20 target, GPU ~41% | Live demo tracking |
+| Ultralytics `.pt` (CUDA) | 960px | ~14.9 vs 15-20 target, GPU ~94% | Fallback / first bring-up |
+| TensorRT FP16 rat engine | 640px | ~13.9-20 | Rat tracking |
 
-**Recommendation:** Use 640px at `--inference-fps 20` with the TensorRT engine, and optimize the depth/control loop before raising image size.
+**Recommendation:** always export a TensorRT engine on-device for live use
+(`half=True`, `imgsz` matching the deployment size); the `.pt` path saturates
+the GPU for two-thirds of the throughput.
 
 ## Configuration Files
 
 - **pyproject.toml** - Dependencies and project metadata
-- **datasets/rat/rat_dataset.yaml** - Dataset configuration for training
+- **config.yaml** - Live robot/camera/tracking/controller configuration (mounted into the demo container - edit + `ratbot restart`, no rebuild)
+- **datasets/rat/rat_dataset.yaml** / **datasets/redbull/redbull_dataset.yaml** - Dataset configurations for training
 - **runs/*/args.yaml** - Training run configuration
+- **docs/math.md** - every mathematical technique used here, from algebra up
+- **docs/velocity-controller-test-plan.md**, **docs/2026-08-03-redbull-demo-session.md** - hardware test plans and session notes
 
 ## Troubleshooting
 
