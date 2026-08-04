@@ -225,8 +225,10 @@ class DetectionPipelineMixin:
                 print(f"   Class: {class_name}, Center: ({center_x}, {center_y}), Confidence: {confidence:.3f}")
 
                 # World mode already updated every valid 3D detection above.  The
-                # legacy angular belief remains the default/fallback mode.
-                if not self.world_tracking:
+                # legacy angular belief remains the default/fallback mode — and
+                # also drives actuation in world SHADOW mode (world tracking on
+                # for the 3D view, actuation off), so feed it there too.
+                if not self.world_tracking or not self.world_actuation_enabled:
                     frame_pose_yaw, frame_pose_pitch = self.pose_at(
                         measurement_time - self.camera_latency_s
                     )
