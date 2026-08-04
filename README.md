@@ -2,6 +2,10 @@
 
 **T1000 for rats** - An AI-powered rat detection and tracking system using YOLO, with automated dataset generation and real-time servo tracking capabilities.
 
+<p align="center">
+  <img src="docs/images/turret-rig.jpg" width="420" alt="The turret: stereo Raspberry Pi cameras and laser on the pitch head, Jetson Orin riding the yaw axis of an SO-101 base">
+</p>
+
 ## Features
 
 🎯 **YOLO Inference** - Fast rat detection using Ultralytics YOLO (v8/v11)
@@ -286,6 +290,10 @@ Positive `laser_vertical_offset_mm` means the laser exits below the camera cente
 
 **Access web interface:** `http://localhost:8000`
 
+<p align="center">
+  <img src="docs/images/webui-video-tracking.jpg" width="820" alt="Web UI video view: a confirmed track on the can with stereo depth (0.59m) and the crosshair aim line, servo controls below">
+</p>
+
 **Performance Notes:**
 - `--inference-fps` is a scheduling target, not guaranteed throughput.
 - The tracker logs `Inference actual FPS` every few seconds. TensorRT is the only viable live path: the raw Python/Ultralytics `.pt` path measured ~14.9 FPS at 960px (and as low as 1.3-1.5 FPS in early 640px tests), while the FP16 TensorRT engine holds `~19.9` actual FPS against the 20 FPS target with stereo depth and servo control enabled (GPU ~41%).
@@ -383,6 +391,10 @@ Current effective baseline override: 52.5mm
 Stereo RMS is usable for testing but still high; a rigid printed target and more varied poses should improve it.
 
 ## Experimental Multi-Target World-Frame Tracking (In Progress)
+
+<p align="center">
+  <img src="docs/images/webui-world-view.jpg" width="820" alt="Web UI world view: the translucent turret model and a tracked target rendered in 3D turret-frame coordinates">
+</p>
 
 The current test config enables this mode by default so live robot testing can
 exercise world-state actuation and visualization. Use `--disable-world-tracking`
