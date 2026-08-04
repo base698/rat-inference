@@ -31,18 +31,27 @@ class FakeBelief:
         return {"yaw": self.yaw, "pitch": self.pitch, "confidence": 1.0}
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
 def make(robot, belief, **kw):
     bounds = ServoBounds(1600, 3100, 1, 500)
     defaults = dict(control_fps=20, kp_yaw=6.0, kp_pitch=5.5,
                     max_yaw_velocity=1200, max_pitch_velocity=760,
-                    max_accel=3500, deadband_raw=8, reconcile_rate=0.0)
+                    max_accel=3500, deadband_raw=8, reconcile_rate=0.0,
+                    clock=FakeClock())
     defaults.update(kw)
     return VelocityFormController(robot, belief, bounds, **defaults)
 
 
 def run_ticks(ctrl, n, dt=0.05):
     for _ in range(n):
-        ctrl.last_time = time.time() - dt  # force dt
+        ctrl.clock.now += dt
         ctrl.track_once()
 
 

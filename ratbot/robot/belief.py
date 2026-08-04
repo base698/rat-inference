@@ -491,7 +491,7 @@ class VelocityFormController:
                  max_yaw_velocity=1200.0, max_pitch_velocity=760.0,
                  max_accel=3500.0, deadband_raw=8,
                  damping_yaw=0.0, damping_pitch=0.0,
-                 reconcile_rate=2.0):
+                 reconcile_rate=2.0, clock=time.time):
         self.robot = robot
         self.belief = belief
         self.bounds = bounds
@@ -505,11 +505,12 @@ class VelocityFormController:
         self.damping_yaw = float(damping_yaw)
         self.damping_pitch = float(damping_pitch)
         self.reconcile_rate = max(0.0, float(reconcile_rate))
+        self.clock = clock
         self.cmd_yaw = None
         self.cmd_pitch = None
         self.vel_yaw = 0.0
         self.vel_pitch = 0.0
-        self.last_time = time.time()
+        self.last_time = self.clock()
         self.loop_count = 0
         self.window_start = time.time()
         self.last_actual_fps = 0.0
@@ -520,7 +521,7 @@ class VelocityFormController:
         self.cmd_pitch = None
         self.vel_yaw = 0.0
         self.vel_pitch = 0.0
-        self.last_time = time.time()
+        self.last_time = self.clock()
 
     def _axis(self, error, measured_vel, prev_vel, kp, damping, max_vel, dt):
         target_vel = 0.0 if abs(error) <= self.deadband_raw else kp * error
@@ -541,7 +542,7 @@ class VelocityFormController:
                 self.reset()
             return
 
-        now = time.time()
+        now = self.clock()
         dt = min(0.2, max(0.005, now - self.last_time))
         self.last_time = now
 
